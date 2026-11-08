@@ -21,11 +21,6 @@ import static android.provider.Settings.Global.DEVELOPMENT_SETTINGS_ENABLED;
 
 import static androidx.preference.PreferenceFragmentCompat.ARG_PREFERENCE_ROOT;
 
-import static com.android.launcher3.BuildConfig.IS_STUDIO_BUILD;
-import static com.android.launcher3.InvariantDeviceProfile.TYPE_MULTI_DISPLAY;
-import static com.android.launcher3.InvariantDeviceProfile.TYPE_TABLET;
-import static com.android.launcher3.util.Executors.MAIN_EXECUTOR;
-
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
@@ -39,11 +34,8 @@ import android.view.MenuItem;
 import android.view.View;
 
 import androidx.annotation.Nullable;
-import androidx.annotation.VisibleForTesting;
-import androidx.core.view.WindowCompat;
 import androidx.fragment.app.DialogFragment;
 import androidx.fragment.app.Fragment;
-import androidx.fragment.app.FragmentActivity;
 import androidx.fragment.app.FragmentManager;
 import androidx.preference.Preference;
 import androidx.preference.PreferenceFragmentCompat;
@@ -57,6 +49,8 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.android.launcher3.BuildConfig;
 import com.android.launcher3.Flags;
 import com.android.launcher3.InvariantDeviceProfile;
+import com.android.crdroid.utils.IconTinterUtils;
+
 import com.android.launcher3.LauncherFiles;
 import com.android.launcher3.LauncherPrefs;
 import com.android.launcher3.R;
@@ -69,10 +63,12 @@ import com.android.launcher3.util.SettingsCache;
 import com.android.settingslib.widget.SettingsBasePreferenceFragment;
 import com.android.settingslib.widget.SettingsThemeHelper;
 
+import com.android.settingslib.collapsingtoolbar.CollapsingToolbarBaseActivity;
+
 /**
  * Settings activity for Launcher.
  */
-public class SettingsActivity extends FragmentActivity
+public class SettingsActivity extends CollapsingToolbarBaseActivity
         implements OnPreferenceStartFragmentCallback, OnPreferenceStartScreenCallback {
 
     @VisibleForTesting
@@ -106,14 +102,7 @@ public class SettingsActivity extends FragmentActivity
         super.onCreate(savedInstanceState);
         setContentView(R.layout.settings_activity);
 
-        setActionBar(findViewById(R.id.action_bar));
-        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
-
         Intent intent = getIntent();
-        if (intent.hasExtra(EXTRA_FRAGMENT_ROOT_KEY) || intent.hasExtra(EXTRA_FRAGMENT_ARGS)
-                || intent.hasExtra(EXTRA_FRAGMENT_HIGHLIGHT_KEY)) {
-            getActionBar().setDisplayHomeAsUpEnabled(true);
-        }
 
         if (savedInstanceState == null) {
             Bundle args = intent.getBundleExtra(EXTRA_FRAGMENT_ARGS);
@@ -135,7 +124,7 @@ public class SettingsActivity extends FragmentActivity
                     getString(R.string.settings_fragment_name));
             f.setArguments(args);
             // Display the fragment as the main content.
-            fm.beginTransaction().replace(R.id.content_frame, f).commit();
+            fm.beginTransaction().replace(com.android.settingslib.collapsingtoolbar.R.id.content_frame, f).commit();
         }
     }
 
@@ -167,7 +156,7 @@ public class SettingsActivity extends FragmentActivity
     public boolean onPreferenceStartScreen(PreferenceFragmentCompat caller, PreferenceScreen pref) {
         Bundle args = new Bundle();
         args.putString(ARG_PREFERENCE_ROOT, pref.getKey());
-        return startPreference(getString(R.string.settings_fragment_name), args, pref.getKey());
+        return startPreference(getString(R.string.settings_title), args, pref.getKey());
     }
 
     @Override
@@ -207,20 +196,6 @@ public class SettingsActivity extends FragmentActivity
 
         @Override
         public void onCreate(@Nullable Bundle savedInstanceState) {
-            if (BuildConfig.IS_DEBUG_DEVICE) {
-                // Query DEVELOPMENT_SETTINGS_ENABLED and recreate activity if such setting
-                // has changed.
-                Uri devUri = Settings.Global.getUriFor(DEVELOPMENT_SETTINGS_ENABLED);
-                SettingsCache settingsCache = SettingsCache.INSTANCE.get(getContext());
-                mDeveloperOptionsEnabled = settingsCache.getValue(devUri);
-                mSettingCacheSafeCloseable = settingsCache.getListenableRef(devUri).forEach(
-                        MAIN_EXECUTOR, (v) -> {
-                            if (v != mDeveloperOptionsEnabled) {
-                                tryRecreateActivity();
-                            }
-                            return null;
-                        });
-            }
             super.onCreate(savedInstanceState);
         }
 
@@ -237,12 +212,6 @@ public class SettingsActivity extends FragmentActivity
             setPreferencesFromResource(R.xml.launcher_preferences, rootKey);
 
             PreferenceScreen screen = getPreferenceScreen();
-            for (int i = screen.getPreferenceCount() - 1; i >= 0; i--) {
-                Preference preference = screen.getPreference(i);
-                if (!initPreference(preference)) {
-                    screen.removePreference(preference);
-                }
-            }
 
             // If the target preference is not in the current preference screen, find the parent
             // preference screen that contains the target preference and set it as the preference
@@ -263,6 +232,8 @@ public class SettingsActivity extends FragmentActivity
             if (getActivity() != null && !TextUtils.isEmpty(getPreferenceScreen().getTitle())) {
                 getActivity().setTitle(getPreferenceScreen().getTitle());
             }
+
+            IconTinterUtils.tintIcons(getPreferenceScreen(), getContext());
         }
 
         private boolean isKeyInPreferenceGroup(String targetKey, PreferenceGroup parent) {
@@ -395,15 +366,6 @@ public class SettingsActivity extends FragmentActivity
 
             if (mRestartOnResume) {
                 recreateActivityNow();
-            }
-        }
-
-        @Override
-        public void onDestroy() {
-            super.onDestroy();
-            if (mSettingCacheSafeCloseable != null) {
-                mSettingCacheSafeCloseable.close();
-                mSettingCacheSafeCloseable = null;
             }
         }
 

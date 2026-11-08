@@ -29,6 +29,7 @@ import static com.android.launcher3.logging.StatsLogManager.LauncherEvent.LAUNCH
 import static com.android.launcher3.logging.StatsLogManager.LauncherEvent.LAUNCHER_SPLIT_SELECTION_EXIT_INTERRUPTED;
 import static com.android.launcher3.logging.StatsLogManager.LauncherEvent.LAUNCHER_WORKSPACE_LONGPRESS;
 
+import android.content.Context;
 import android.graphics.PointF;
 import android.graphics.Rect;
 import android.view.GestureDetector;
@@ -46,11 +47,13 @@ import com.android.launcher3.DeviceProfile;
 import com.android.launcher3.Launcher;
 import com.android.launcher3.LauncherPrefs;
 import com.android.launcher3.Workspace;
+import com.android.launcher3.allapps.AppDrawerStyle;
 import com.android.launcher3.dragndrop.DragLayer;
 import com.android.launcher3.logger.LauncherAtom;
 import com.android.launcher3.testing.TestLogging;
 import com.android.launcher3.testing.shared.TestProtocol;
 import com.android.launcher3.util.TouchUtil;
+import com.android.launcher3.util.VibratorWrapper;
 
 /**
  * Helper class to handle touch on empty space in workspace and show options popup on long press
@@ -143,7 +146,10 @@ public class WorkspaceTouchListener extends GestureDetector.SimpleOnGestureListe
             mLongPressState = STATE_COMPLETED;
         }
 
-        boolean isInAllAppsBottomSheet = mLauncher.isInState(ALL_APPS);
+        // In fullscreen drawer styles there is no "outside" area of a sheet to tap, so a touch
+        // that falls through to the workspace must not close all apps.
+        boolean isInAllAppsBottomSheet = mLauncher.isInState(ALL_APPS)
+                && !AppDrawerStyle.isFullscreen(mLauncher);
 
         final boolean result;
         if (mLongPressState == STATE_COMPLETED) {
@@ -236,7 +242,10 @@ public class WorkspaceTouchListener extends GestureDetector.SimpleOnGestureListe
 
     @Override
     public boolean onDoubleTap(MotionEvent event) {
-        if (LauncherPrefs.SLEEP_GESTURE.get(mWorkspace.getContext())) {
+        Context context = mWorkspace.getContext();
+        if (LauncherPrefs.SLEEP_GESTURE.get(context)) {
+            if (LauncherPrefs.SLEEP_GESTURE_HAPTIC.get(context))
+                VibratorWrapper.INSTANCE.get(context).vibrate(VibratorWrapper.EFFECT_CLICK);
             mLauncher.onSleepEvent(event);
             return true;
         }

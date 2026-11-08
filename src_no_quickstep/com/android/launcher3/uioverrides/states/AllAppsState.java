@@ -24,6 +24,7 @@ import com.android.launcher3.Launcher;
 import com.android.launcher3.LauncherState;
 import com.android.launcher3.LauncherUiState;
 import com.android.launcher3.R;
+import com.android.launcher3.allapps.AppDrawerStyle;
 import com.android.launcher3.util.Themes;
 import com.android.launcher3.views.ActivityContext;
 import com.android.launcher3.views.ScrimColors;
@@ -105,11 +106,12 @@ public class AllAppsState extends LauncherState {
 
     @Override
     public ScrimColors getWorkspaceScrimColor(Launcher launcher) {
-        return new ScrimColors(
-                /* backgroundColor */
-                launcher.getDeviceProfile().getDeviceProperties().isLargeScreen()
+        int backgroundColor = AppDrawerStyle.applyDrawerOpacity(launcher,
+                AppDrawerStyle.isCustomColorEnabled(launcher)
+                        ? AppDrawerStyle.getCustomBackgroundColor(launcher)
+                        : launcher.getDeviceProfile().getDeviceProperties().isLargeScreen()
                         ? launcher.getResources().getColor(R.color.widgets_picker_scrim)
-                        : Themes.getAttrColor(launcher, R.attr.allAppsScrimColor),
-                /* foregroundColor */ Color.TRANSPARENT);
+                        : Themes.getAttrColor(launcher, R.attr.allAppsScrimColor));
+        return new ScrimColors(backgroundColor, /* foregroundColor */ Color.TRANSPARENT);
     }
 }

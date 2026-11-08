@@ -40,6 +40,9 @@
 
     <dimen name="dynamic_grid_hotseat_side_padding">0dp</dimen>
 
+    <dimen name="qsb_icon_padding">10dp</dimen>
+    <dimen name="qsb_widget_vertical_padding">6dp</dimen>
+
     <!-- Scalable Grid -->
     <dimen name="min_qsb_margin">8dp</dimen>
 
@@ -467,7 +470,7 @@
     <dimen name="bubblebar_hotseat_adjustment_threshold">0dp</dimen>
 
     <!-- Size of the radius for the rounded corners of Persistent Taskbar. -->
-    <dimen name="persistent_taskbar_corner_radius">16dp</dimen>
+    <dimen name="persistent_taskbar_corner_radius">@*android:dimen/rounded_corner_radius</dimen>
 
     <!-- Base Swipe Detector, speed in dp/s -->
     <dimen name="base_swift_detector_fling_release_velocity">1dp</dimen>

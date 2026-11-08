@@ -37,6 +37,9 @@ import static com.android.launcher3.desktop.DesktopStateProvider.getDesktopState
 import static com.android.launcher3.logging.StatsLogManager.LauncherEvent.LAUNCHER_FOLDER_OPEN;
 import static com.android.launcher3.taskbar.TaskbarAutohideSuspendController.FLAG_AUTOHIDE_SUSPEND_DRAGGING;
 import static com.android.launcher3.taskbar.TaskbarAutohideSuspendController.FLAG_AUTOHIDE_SUSPEND_FULLSCREEN;
+import static com.android.launcher3.taskbar.TaskbarManagerImpl.NAVBAR_IME_SPACE_URI;
+import static com.android.launcher3.taskbar.TaskbarManagerImpl.TASKBAR_SETTING_UNSET;
+import static com.android.launcher3.taskbar.TaskbarManagerImpl.resolveTaskbarEnabled;
 import static com.android.launcher3.taskbar.TaskbarStashController.FLAG_IN_SECONDARY_LAUNCHER_ON_CD;
 import static com.android.launcher3.taskbar.TaskbarStashController.FLAG_STASHED_IN_APP_AUTO;
 import static com.android.launcher3.taskbar.TaskbarStashController.SHOULD_BUBBLES_FOLLOW_DEFAULT_VALUE;
@@ -51,7 +54,6 @@ import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_N
 import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_VOICE_INTERACTION_WINDOW_SHOWING;
 import static com.android.wm.shell.Flags.enableBubbleBar;
 import static com.android.wm.shell.Flags.enableBubbleBarOnPhones;
-import static com.android.wm.shell.Flags.enableTinyTaskbar;
 import static com.android.wm.shell.Flags.fixSwipeUpNotificationShadeWithBubbleBar;
 
 import static java.lang.invoke.MethodHandles.Lookup.PROTECTED;
@@ -78,8 +80,10 @@ import android.os.Process;
 import android.os.Trace;
 import android.provider.Settings;
 import android.provider.Settings.Secure;
+import android.provider.Settings.System;
 import android.util.Log;
 import android.util.Pair;
+import android.view.DisplayCutout;
 import android.view.Gravity;
 import android.view.Surface;
 import android.view.View;
@@ -100,6 +104,7 @@ import androidx.annotation.UiThread;
 import androidx.annotation.VisibleForTesting;
 
 import com.android.internal.jank.Cuj;
+import com.android.internal.util.crdroid.Utils;
 import com.android.launcher3.AbstractFloatingView;
 import com.android.launcher3.BubbleTextView;
 import com.android.launcher3.BubbleTextView.RunningAppState;
@@ -239,6 +244,11 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
             LineageSettings.System.ENABLE_TASKBAR);
     private static final Uri URI_NAVIGATION_BAR_HINT = LineageSettings.System.getUriFor(
             LineageSettings.System.NAVIGATION_BAR_HINT);
+    private static final Uri URI_NAVBAR_LAYOUT_MODE = Secure.getUriFor(Secure.NAVBAR_LAYOUT_MODE);
+    private static final Uri URI_FORCE_SHOW_NAVBAR = LineageSettings.System.getUriFor(
+            LineageSettings.System.FORCE_SHOW_NAVBAR);
+    private static final Uri URI_NAVBAR_LENGTH_MODE = System.getUriFor(System.GESTURE_NAVBAR_LENGTH_MODE);
+    private static final Uri URI_NAVBAR_HEIGHT_MODE = System.getUriFor(System.GESTURE_NAVBAR_HEIGHT_MODE);
 
     private static final String TAG = "TaskbarActivityContext";
 
@@ -284,6 +294,7 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
 
     private NavigationMode mNavMode;
     private boolean mImeDrawsImeNavBar;
+    private final boolean mImeDrawsImeNavBarEnabled;
 
     /**
      * Static return value of {@link #isImeDocked}, used for testing only. A {@code null} value will
@@ -295,8 +306,12 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
     private final boolean mIsSafeModeEnabled;
     private final boolean mIsUserSetupComplete;
     private final boolean mIsNavBarKidsMode;
-    private final boolean mIsTaskbarEnabled;
+    private final int mIsTaskbarEnabled;
     private final boolean mIsNavbarHintEnabled;
+    private final int mNavbarLayoutMode;
+    private final int mIsNavbarEnabled;
+    private final int mNavbarLengthMode;
+    private final int mNavbarHeightMode;
 
     private boolean mIsDestroyed = false;
 
@@ -360,8 +375,17 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
         SettingsCache settingsCache = SettingsCache.INSTANCE.get(this);
         mIsUserSetupComplete = settingsCache.getValue(URI_USER_SETUP_COMPLETE);
         mIsNavBarKidsMode = settingsCache.getValue(URI_NAV_BAR_KIDS_MODE);
-        mIsTaskbarEnabled = settingsCache.getValue(URI_ENABLE_TASKBAR);
+        int rawTaskbarSetting = settingsCache.getIntValue(URI_ENABLE_TASKBAR,
+                TASKBAR_SETTING_UNSET);
+        mIsTaskbarEnabled = resolveTaskbarEnabled(rawTaskbarSetting,
+                launcherDp.getDeviceProperties().isLargeScreen());
         mIsNavbarHintEnabled = settingsCache.getValue(URI_NAVIGATION_BAR_HINT);
+        mNavbarLayoutMode = settingsCache.getIntValue(URI_NAVBAR_LAYOUT_MODE);
+        mIsNavbarEnabled = settingsCache.getIntValue(URI_FORCE_SHOW_NAVBAR,
+                                Utils.hasNavbarByDefault(mWindowContext) ? 1 : 0);
+        mNavbarLengthMode = settingsCache.getIntValue(URI_NAVBAR_LENGTH_MODE, 1);
+        mNavbarHeightMode = settingsCache.getIntValue(URI_NAVBAR_HEIGHT_MODE, 3);
+        mImeDrawsImeNavBarEnabled = settingsCache.getValue(NAVBAR_IME_SPACE_URI);
         mBubbleFeatureConfig =
                 new BubbleFeatureConfigImpl(mWindowContext, getDesktopState(mWindowContext));
 
@@ -373,7 +397,8 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
                 mDeviceProfile.inv.numColumns);
 
         mImeDrawsImeNavBar = getBoolByName(IME_DRAWS_IME_NAV_BAR_RES_NAME, getResources(), false)
-                && isPrimaryDisplay();
+                && isPrimaryDisplay()
+                && mImeDrawsImeNavBarEnabled;
         mIsSafeModeEnabled = TraceHelper.allowIpcs("isSafeMode",
                 () -> getPackageManager().isSafeMode());
 
@@ -392,6 +417,26 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
         BubbleBarView bubbleBarView = mDragLayer.findViewById(R.id.taskbar_bubbles);
         FrameLayout bubbleBarContainer = mDragLayer.findViewById(R.id.taskbar_bubbles_container);
         StashedHandleView bubbleHandleView = mDragLayer.findViewById(R.id.stashed_bubble_handle);
+
+        mDragLayer.setOnApplyWindowInsetsListener((v, insets) -> {
+            DisplayCutout cutout = insets.getDisplayCutout();
+            if (cutout == null || !isPhoneMode()) return insets;
+            v.setPadding(
+                    cutout.getSafeInsetLeft(), cutout.getSafeInsetTop(),
+                    cutout.getSafeInsetRight(), cutout.getSafeInsetBottom());
+            return insets;
+        });
+
+        mDragLayer.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            @Override
+            public void onViewAttachedToWindow(@NonNull View v) {
+                mDragLayer.removeOnAttachStateChangeListener(this);
+                mDragLayer.requestApplyInsets();
+            }
+
+            @Override
+            public void onViewDetachedFromWindow(@NonNull View v) {}
+        });
 
         mAccessibilityDelegate = new TaskbarShortcutMenuAccessibilityDelegate(this);
 
@@ -626,15 +671,15 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
     /**
      * Init of taskbar activity context.
      * @param duration If duration is greater than 0, it will be used to create an animation
- *                     for the taskbar create/recreate process.
+     * for the taskbar create/recreate process.
      */
     public void init(@NonNull TaskbarSharedState sharedState, boolean userUnlocked, int duration) {
         mImeDrawsImeNavBar = getBoolByName(IME_DRAWS_IME_NAV_BAR_RES_NAME, getResources(), false)
-                && isPrimaryDisplay();
+                && isPrimaryDisplay()
+                && mImeDrawsImeNavBarEnabled;
         mLastRequestedNonFullscreenSize = getDefaultTaskbarWindowSize();
         mWindowLayoutParams = createAllWindowParams();
         mLastUpdatedLayoutParams = new WindowManager.LayoutParams();
-
 
         AnimatorSet recreateAnim = null;
         if (duration > 0) {
@@ -694,8 +739,7 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
      * single window for taskbar and navbar.
      */
     public boolean isPhoneMode() {
-        if (mDeviceProfile.getDeviceProperties().getTaskbarConfiguration().isTaskbarPresent() &&
-                !isTaskbarEnabled()) {
+        if (mIsTaskbarEnabled == 0 && !isBubbleBarOnPhone()) {
             return true;
         }
         return isDeviceProfileForPhoneMode(mDeviceProfile);
@@ -732,7 +776,8 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
 
     /** Returns {@code true} iff a tiny version of taskbar is shown on phone. */
     public boolean isTinyTaskbar() {
-        return enableTinyTaskbar()
+        return mIsTaskbarEnabled != 0
+                && mDeviceProfile.getDeviceProperties().getDeviceConfiguration().isGestureMode()
                 && mDeviceProfile.getDeviceProperties().isPhone()
                 && mDeviceProfile.getDeviceProperties().getTaskbarConfiguration()
                 .isTaskbarPresent();
@@ -880,6 +925,10 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
         windowLayoutParams.layoutInDisplayCutoutMode = LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
         windowLayoutParams.privateFlags =
                 WindowManager.LayoutParams.PRIVATE_FLAG_NO_MOVE_ANIMATION;
+        if (isPhoneMode()) {
+            windowLayoutParams.privateFlags |=
+                    WindowManager.LayoutParams.PRIVATE_FLAG_LAYOUT_SIZE_EXTENDED_BY_CUTOUT;
+        }
         windowLayoutParams.accessibilityTitle = getString(
                 isPhoneMode() ? R.string.taskbar_phone_a11y_title : R.string.taskbar_a11y_title);
 
@@ -900,7 +949,8 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
             WindowManager.LayoutParams lp =
                     createDefaultWindowLayoutParams(windowType,
                             TaskbarActivityContext.WINDOW_TITLE);
-            if (isPhoneButtonNavMode()) {
+            if (isPhoneButtonNavMode()
+                    && mDeviceProfile.getDeviceProperties().getCanNavBarMove()) {
                 populatePhoneButtonNavModeWindowLayoutParams(rot, lp);
             }
             windowLayoutParams.paramsForRotation[rot] = lp;
@@ -983,6 +1033,10 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
 
     public boolean imeDrawsImeNavBar() {
         return mImeDrawsImeNavBar;
+    }
+
+    public boolean imeDrawsImeNavBarEnabled() {
+        return mImeDrawsImeNavBarEnabled;
     }
 
     public int getCornerRadius() {
@@ -1576,7 +1630,10 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
     public void setTaskbarWindowSize(int size) {
         // In landscape phone button nav mode, we should set the task bar width instead of height
         // because this is the only case in which the nav bar is not on the display bottom.
-        boolean landscapePhoneButtonNav = isPhoneButtonNavMode() && mDeviceProfile.getDeviceProperties().isLandscape();
+        boolean landscapePhoneButtonNav = isPhoneButtonNavMode()
+                && mDeviceProfile.getDeviceProperties().getCanNavBarMove()
+                && (mDeviceProfile.getDeviceProperties().isLandscape() !=
+                        mDeviceProfile.getDeviceProperties().isDefaultLandscape());
         if ((landscapePhoneButtonNav ? mWindowLayoutParams.width : mWindowLayoutParams.height)
                 == size || mIsDestroyed) {
             return;
@@ -1626,7 +1683,9 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
         if (isPhoneMode()) {
             return isThreeButtonNav() ?
                     resources.getDimensionPixelSize(R.dimen.taskbar_phone_size) :
-                    resources.getDimensionPixelSize(R.dimen.taskbar_stashed_size);
+                    SettingsCache.INSTANCE.get(this).getValue(URI_NAVIGATION_BAR_HINT) ?
+                    resources.getDimensionPixelSize(R.dimen.taskbar_stashed_size) :
+                    0;
         }
 
         int bubbleBarTop = mControllers.bubbleControllers.map(bubbleControllers ->
@@ -2478,12 +2537,28 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
         return mIsNavBarKidsMode;
     }
 
-    public boolean isTaskbarEnabled() {
+    public int isTaskbarEnabled() {
         return mIsTaskbarEnabled;
     }
 
     public boolean isNavbarHintEnabled() {
         return mIsNavbarHintEnabled;
+    }
+
+    public int isNavbarEnabled() {
+        return mIsNavbarEnabled;
+    }
+
+    public int getNavbarLayoutMode() {
+        return mNavbarLayoutMode;
+    }
+
+    public int getNavbarLengthMode() {
+        return mNavbarLengthMode;
+    }
+
+    public int getNavbarHeightMode() {
+        return mNavbarHeightMode;
     }
 
     /**

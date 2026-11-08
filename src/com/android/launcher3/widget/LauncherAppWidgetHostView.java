@@ -42,6 +42,7 @@ import androidx.annotation.Nullable;
 
 import com.android.launcher3.CheckLongPressHelper;
 import com.android.launcher3.Flags;
+import com.android.launcher3.LauncherPrefs;
 import com.android.launcher3.R;
 import com.android.launcher3.Utilities;
 import com.android.launcher3.popup.Poppable;

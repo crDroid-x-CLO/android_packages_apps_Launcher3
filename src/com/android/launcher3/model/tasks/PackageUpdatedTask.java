@@ -28,10 +28,13 @@ import android.content.pm.LauncherActivityInfo;
 import android.content.pm.LauncherApps;
 import android.content.pm.ShortcutInfo;
 import android.os.UserHandle;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 
 import com.android.launcher3.LauncherModel.ModelUpdateTask;
+import com.android.launcher3.R;
+import com.android.launcher3.Utilities;
 import com.android.launcher3.automation.AutomationRepository;
 import com.android.launcher3.icons.IconCache;
 import com.android.launcher3.logging.FileLog;
@@ -98,10 +101,14 @@ public class PackageUpdatedTask implements ModelUpdateTask {
             }
         }
 
+        boolean needsRestart = false;
         final HashMap<String, List<LauncherActivityInfo>> activitiesLists = new HashMap<>();
         for (String packageName : mPackages) {
             iconCache.updateIconsForPkg(packageName, mUser);
             activitiesLists.put(packageName, appsList.updatePackage(context, packageName, mUser));
+            if (isTargetPackage(packageName)) {
+                needsRestart = true;
+            }
         }
 
         taskController.bindApplicationsIfNeeded();
@@ -227,5 +234,14 @@ public class PackageUpdatedTask implements ModelUpdateTask {
             }
             taskController.bindUpdatedWidgets(dataModel);
         }
+
+        if (needsRestart) {
+            Toast.makeText(context, R.string.updating_launcher_components, Toast.LENGTH_SHORT).show();
+            Utilities.restart();
+        }
+    }
+
+    private boolean isTargetPackage(String packageName) {
+        return packageName.equals(Utilities.GSA_PACKAGE);
     }
 }

@@ -27,6 +27,7 @@ import androidx.core.graphics.ColorUtils;
 
 import com.android.launcher3.DeviceProfile;
 import com.android.launcher3.Launcher;
+import com.android.launcher3.LauncherPrefs;
 import com.android.launcher3.LauncherState;
 import com.android.launcher3.LauncherUiState;
 import com.android.launcher3.R;
@@ -117,7 +118,7 @@ public class OverviewState extends LauncherState {
 
     @Override
     public int getVisibleElements(LauncherUiState launcherUiState) {
-        int elements = CLEAR_ALL_BUTTON | OVERVIEW_ACTIONS | ADD_DESK_BUTTON;
+        int elements = OVERVIEW_ACTIONS | ADD_DESK_BUTTON;
         boolean showFloatingSearch;
         DeviceProfile dp = launcherUiState.getDeviceProfileRef().getValue();
         if (dp.getDeviceProperties().isPhone()) {
@@ -133,8 +134,15 @@ public class OverviewState extends LauncherState {
         if (showFloatingSearch) {
             elements |= FLOATING_SEARCH_BAR;
         }
+        if (dp.getDeviceProperties().isLargeScreen() ||
+                !dp.getLauncherPrefs().get(LauncherPrefs.RECENTS_CLEAR_ALL)) {
+            elements |= CLEAR_ALL_BUTTON;
+        }
         if (launcherUiState.getSplitScreenUiState().isSplitSelectActive()) {
             elements &= ~CLEAR_ALL_BUTTON & ~ADD_DESK_BUTTON;
+        }
+        if (dp.getLauncherPrefs().get(LauncherPrefs.RECENTS_MEMINFO)) {
+            elements |= MEMINFO;
         }
         return elements;
     }
@@ -167,8 +175,11 @@ public class OverviewState extends LauncherState {
 
     @Override
     public ScrimColors getWorkspaceScrimColor(Launcher launcher) {
+        int backgroundColor = ColorUtils.setAlphaComponent(
+                Themes.getAttrColor(launcher, R.attr.overviewScrimColor),
+                LauncherPrefs.RECENTS_OPACITY.get(launcher) * 255 / 100);
         return new ScrimColors(
-                /* backgroundColor= */ Themes.getAttrColor(launcher, R.attr.overviewScrimColor),
+                /* backgroundColor= */ backgroundColor,
                 /* foregroundColor= */ Color.TRANSPARENT);
     }
 

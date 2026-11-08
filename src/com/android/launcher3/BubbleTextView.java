@@ -24,7 +24,7 @@ import static com.android.launcher3.BubbleTextView.RunningAppState.MINIMIZED;
 import static com.android.launcher3.BubbleTextView.RunningAppState.RUNNING;
 import static com.android.launcher3.Flags.enableContrastTiles;
 import static com.android.launcher3.Flags.enableScalabilityForDesktopExperience;
-import static com.android.launcher3.LauncherPrefs.ALLAPPS_THEMED_ICONS;
+import static com.android.launcher3.LauncherPrefs.ALLAPPS_ICON_CUSTOMIZATION;
 import static com.android.launcher3.LauncherPrefs.SHOW_DESKTOP_LABELS;
 import static com.android.launcher3.LauncherPrefs.SHOW_DRAWER_LABELS;
 import static com.android.launcher3.UtilitiesKt.drawWorkspaceItemSelectionHighlight;
@@ -348,15 +348,14 @@ public class BubbleTextView extends TextView implements ItemInfoUpdateReceiver,
             defaultIconSize = mDeviceProfile.getWorkspaceProfile().getIconSizePx();
             setCenterVertically(mDeviceProfile.getWorkspaceProfile().getIconCenterVertically());
             mShouldShowLabel = SHOW_DESKTOP_LABELS.get(context);
-        } else if (mDisplay == DISPLAY_ALL_APPS || mDisplay == DISPLAY_PREDICTION_ROW
-                || mDisplay == DISPLAY_SEARCH_RESULT_APP_ROW) {
+        } else if (displayIsAppDrawer()) {
             setTextSize(TypedValue.COMPLEX_UNIT_PX,
                     mDeviceProfile.getAllAppsProfile().getIconTextSizePx());
             setCompoundDrawablePadding(
                     mDeviceProfile.getAllAppsProfile().getIconDrawablePaddingPx());
             defaultIconSize = mDeviceProfile.getAllAppsProfile().getIconSizePx();
             mShouldShowLabel = SHOW_DRAWER_LABELS.get(context);
-            mThemeAllAppsIcons = ALLAPPS_THEMED_ICONS.get(context);
+            mThemeAllAppsIcons = ALLAPPS_ICON_CUSTOMIZATION.get(context);
         } else if (mDisplay == DISPLAY_FOLDER) {
             setTextSize(TypedValue.COMPLEX_UNIT_PX,
                     mDeviceProfile.getFolderProfile().getChildTextSizePx());
@@ -386,7 +385,6 @@ public class BubbleTextView extends TextView implements ItemInfoUpdateReceiver,
             defaultIconSize = mDeviceProfile.getWorkspaceProfile().getIconSizePx();
             mShouldShowLabel = SHOW_DESKTOP_LABELS.get(context);
         }
-
 
         mIconSize = a.getDimensionPixelSize(R.styleable.BubbleTextView_iconSizeOverride,
                 defaultIconSize);
@@ -438,6 +436,12 @@ public class BubbleTextView extends TextView implements ItemInfoUpdateReceiver,
         setAccessibilityDelegate(mActivity.getAccessibilityDelegate());
 
         setContainerTextVisibility(mDisplay != DISPLAY_TASKBAR);
+    }
+    
+    private boolean displayIsAppDrawer() {
+        return (mDisplay == DISPLAY_ALL_APPS 
+                || mDisplay == DISPLAY_PREDICTION_ROW
+                || mDisplay == DISPLAY_SEARCH_RESULT_APP_ROW);
     }
 
     @Override
@@ -703,7 +707,7 @@ public class BubbleTextView extends TextView implements ItemInfoUpdateReceiver,
     protected boolean shouldUseTheme() {
         return mDisplay == DISPLAY_WORKSPACE || mDisplay == DISPLAY_FOLDER
                 || mDisplay == DISPLAY_TASKBAR
-                || (mThemeAllAppsIcons && mDisplay == DISPLAY_ALL_APPS);
+                || (mThemeAllAppsIcons && displayIsAppDrawer());
     }
 
     /**
@@ -715,7 +719,7 @@ public class BubbleTextView extends TextView implements ItemInfoUpdateReceiver,
         // whether the BubbleTextView height needs to be increased to accommodate an extra line of
         // text.
         if (mDisplay == DISPLAY_ALL_APPS || mDisplay == DISPLAY_PREDICTION_ROW) {
-            return mDeviceProfile.inv.enableTwoLinesInAllApps;
+            return mDeviceProfile.inv.getLauncherPrefs().get(LauncherPrefs.ENABLE_TWOLINE_ALLAPPS_TOGGLE);
         }
 
         // Otherwise, show two lines if the cell declares it can fit two line label.
@@ -1108,10 +1112,10 @@ public class BubbleTextView extends TextView implements ItemInfoUpdateReceiver,
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         int height = MeasureSpec.getSize(heightMeasureSpec);
-        if (mCenterVertically) {
+        if ((mCenterVertically || !mShouldShowLabel) && !mLayoutHorizontal) {
             Paint.FontMetrics fm = getPaint().getFontMetrics();
-            int cellHeightPx = mIconSize + getCompoundDrawablePadding() +
-                    (int) Math.ceil(fm.bottom - fm.top) * getCellSpecMaxTextLineCount();
+            int textHeight = mShouldShowLabel ? (int) Math.ceil(fm.bottom - fm.top) * getCellSpecMaxTextLineCount(): 0;
+            int cellHeightPx = mIconSize + getCompoundDrawablePadding() + textHeight;
             setPadding(getPaddingLeft(), (height - cellHeightPx) / 2, getPaddingRight(),
                     getPaddingBottom());
         }
@@ -1451,6 +1455,11 @@ public class BubbleTextView extends TextView implements ItemInfoUpdateReceiver,
         return mIsIconVisible ? mIcon : new ColorDrawable(Color.TRANSPARENT);
     }
 
+    @Override
+    public boolean hasOverlappingRendering() {
+        return false;
+    }
+
     /** Sets the icon visual state to disabled or not. */
     public void setIconDisabled(boolean isDisabled) {
         if (mIcon != null) {
@@ -1468,7 +1477,9 @@ public class BubbleTextView extends TextView implements ItemInfoUpdateReceiver,
         // same as before.
         mDisableRelayout = mIcon != null;
 
-        icon.setBounds(0, 0, mIconSize, mIconSize);
+        if (icon.getBounds().width() != mIconSize || icon.getBounds().height() != mIconSize) {
+            icon.setBounds(0, 0, mIconSize, mIconSize);
+        }
 
         updateIcon(icon);
 
@@ -1522,6 +1533,9 @@ public class BubbleTextView extends TextView implements ItemInfoUpdateReceiver,
         CacheLookupFlag expectedFlag = DEFAULT_LOOKUP_FLAG.withThemeIcon(shouldUseTheme());
         if (getTag() instanceof ItemInfoWithIcon info && !mHighResUpdateInProgress
                 && info.getMatchingLookupFlag().isVisuallyLessThan(expectedFlag)) {
+                if (mIcon != null && mIcon.isThemed() && shouldUseTheme()) {
+                    return;
+                }
             if (mIconLoadRequest != null) {
                 mIconLoadRequest.cancel();
             }

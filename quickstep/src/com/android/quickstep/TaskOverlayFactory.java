@@ -236,6 +236,21 @@ public class TaskOverlayFactory {
                     .saveAppPair(taskView);
         }
 
+        private void clearAllTasks() {
+            final RecentsView recentsView =
+                    mTaskContainer.getTaskView().getRecentsView();
+            recentsView.dismissAllTasks();
+        }
+
+        private void launchLens() {
+            final RecentsView recentsView =
+                    mTaskContainer.getTaskView().getRecentsView();
+            if (recentsView != null) {
+                recentsView.startHome();
+                mImageApi.startLensActivity();
+            }
+        }
+
         /**
          * Called when the overlay is no longer used.
          */
@@ -389,16 +404,32 @@ public class TaskOverlayFactory {
             }
 
             @SuppressLint("NewApi")
+            @Override
             public void onScreenshot() {
                 endLiveTileMode(() -> saveScreenshot(mTask));
             }
 
+            @Override
             public void onSplit() {
                 endLiveTileMode(TaskOverlay.this::enterSplitSelect);
             }
 
             public void onSaveAppPair() {
                 endLiveTileMode(TaskOverlay.this::saveAppPair);
+            }
+
+            @Override
+            public void onClearAllTasksRequested() {
+                endLiveTileMode(TaskOverlay.this::clearAllTasks);
+            }
+
+            @Override
+            public void onLens() {
+                if (mIsAllowedByPolicy) {
+                    endLiveTileMode(TaskOverlay.this::launchLens);
+                } else {
+                    showBlockedByPolicyMessage();
+                }
             }
         }
     }
@@ -416,5 +447,9 @@ public class TaskOverlayFactory {
 
         /** User wants to save an app pair with current group of apps. */
         void onSaveAppPair();
+
+        void onClearAllTasksRequested();
+
+        void onLens();
     }
 }

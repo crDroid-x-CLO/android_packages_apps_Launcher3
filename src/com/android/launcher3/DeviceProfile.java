@@ -19,7 +19,7 @@ package com.android.launcher3;
 import static com.android.launcher3.InvariantDeviceProfile.createDisplayOptionSpec;
 import static com.android.launcher3.Utilities.dpiFromPx;
 import static com.android.launcher3.icons.IconNormalizer.ICON_VISIBLE_AREA_FACTOR;
-import static com.android.launcher3.taskbar.TaskbarManagerImpl.ENABLE_TASKBAR_URI;
+import static com.android.launcher3.taskbar.TaskbarManagerImpl.isTaskbarEnabledBySetting;
 import static com.android.launcher3.testing.shared.ResourceUtils.INVALID_RESOURCE_HANDLE;
 import static com.android.launcher3.testing.shared.ResourceUtils.pxFromDp;
 import static com.android.systemui.shared.Flags.enableRecentsInTaskbar;
@@ -138,6 +138,15 @@ public class DeviceProfile {
 
     // Taskbar
     private TaskbarProfile mTaskbarProfile;
+    private final boolean mEnableTaskbar;
+
+    private float allAppsCellHeightMultiplier;
+    private boolean allAppsIconText;
+
+    public boolean isQsbVisible;
+
+    // Meminfo in overview
+    public int memInfoHeight;
 
     /** Used only as an alternative to mocking when null values cannot be used. */
     @VisibleForTesting
@@ -163,7 +172,9 @@ public class DeviceProfile {
                         false,
                         false
                 ),
-                new TaskbarConfiguration(false)
+                new TaskbarConfiguration(false),
+                0,
+                false
         );
         mBottomSheetProfile = new BottomSheetProfile(0, 0, 0, 0f, 0f);
         overviewProfile = new OverviewProfile(
@@ -188,6 +199,7 @@ public class DeviceProfile {
         mInfo = null;
         mMetrics = null;
         mIconSizeSteps = null;
+        isQsbVisible = true;
         mIsScalableGrid = false;
         mTypeIndex = 0;
         mIsResponsiveGrid = false;
@@ -196,6 +208,7 @@ public class DeviceProfile {
         mAllAppsProfile = new AllAppsProfile(new Point(0, 0), 0, 0, 0f, 0, 0, 0, 0, 0, 0,
                 new Rect(), 0, 0);
         mSysuiProfile = new SysuiProfile(0, 0, false);
+        mEnableTaskbar = false;
     }
 
     DeviceProfile(
@@ -214,12 +227,14 @@ public class DeviceProfile {
         this.mDisplayOptionSpec = displayOptionSpec;
 
         // TODO(b/241386436): shouldn't change any launcher behaviour
-        mIsResponsiveGrid = inv.workspaceSpecsId != INVALID_RESOURCE_HANDLE
-                && inv.allAppsSpecsId != INVALID_RESOURCE_HANDLE
-                && inv.folderSpecsId != INVALID_RESOURCE_HANDLE
-                && inv.hotseatSpecsId != INVALID_RESOURCE_HANDLE
-                && inv.workspaceCellSpecsId != INVALID_RESOURCE_HANDLE
-                && inv.allAppsCellSpecsId != INVALID_RESOURCE_HANDLE;
+        // Use the display option spec rather than inv, as secondary displays may not share the
+        // main display's (e.g. fixed landscape) grid.
+        mIsResponsiveGrid = displayOptionSpec.workspaceSpecsId != INVALID_RESOURCE_HANDLE
+                && displayOptionSpec.allAppsSpecsId != INVALID_RESOURCE_HANDLE
+                && displayOptionSpec.folderSpecsId != INVALID_RESOURCE_HANDLE
+                && displayOptionSpec.hotseatSpecsId != INVALID_RESOURCE_HANDLE
+                && displayOptionSpec.workspaceCellSpecsId != INVALID_RESOURCE_HANDLE
+                && displayOptionSpec.allAppsCellSpecsId != INVALID_RESOURCE_HANDLE;
 
         mIsScalableGrid = inv.isScalable
                 && !isVerticalBarLayout()
@@ -244,6 +259,12 @@ public class DeviceProfile {
         mIconSizeSteps = new IconSizeSteps(res);
 
         mTypeIndex = displayOptionSpec.typeIndex;
+
+        allAppsCellHeightMultiplier =
+                    (float) inv.getLauncherPrefs().get(LauncherPrefs.ROW_HEIGHT) / 100F;
+        allAppsIconText = inv.getLauncherPrefs().get(LauncherPrefs.SHOW_DRAWER_LABELS);
+
+        mEnableTaskbar = isTaskbarEnabledBySetting(context, mDeviceProperties.isLargeScreen());
 
         mTaskbarProfile = TaskbarProfile.Factory.createTaskbarProfile(
                 res,
@@ -278,7 +299,12 @@ public class DeviceProfile {
                     responsiveAspectRatio, mDeviceProperties.getHeightPx());
         }
 
-        int qsbHeight = mIsHotseatQsbEnabled ? res.getDimensionPixelSize(R.dimen.qsb_widget_height) : 0;
+        memInfoHeight = inv.getLauncherPrefs().get(LauncherPrefs.RECENTS_MEMINFO) ? res.getDimensionPixelSize(
+                R.dimen.meminfo_claimed_height) : 0;
+
+        isQsbVisible = Utilities.showQSB(context);
+
+        int qsbHeight = isQsbVisible ? res.getDimensionPixelSize(R.dimen.qsb_widget_height) : 0;
 
         HotseatProfileInitialValues hotseatProfileInitialValues =
                 HotseatProfileInitialValues.Factory.createHotseatProfileInitialValues(
@@ -397,7 +423,8 @@ public class DeviceProfile {
                     /*isVerticalBarLayout*/ isVerticalBarLayout(),
                     /*res*/ res,
                     /*displayOptionSpec*/ displayOptionSpec,
-                    /*allAppsTopPadding*/ allAppsTopPadding
+                    /*allAppsTopPadding*/ allAppsTopPadding,
+                    /*allAppsCellHeightMultiplier*/ allAppsCellHeightMultiplier
             );
         } else {
             mAllAppsProfile = AllAppsProfile.Factory.createAllAppsProfile(
@@ -410,7 +437,8 @@ public class DeviceProfile {
                     /*deviceProperties*/ mDeviceProperties,
                     /*context*/ context,
                     /* allAppsTopPadding */ allAppsTopPadding,
-                    /* displayOptionSpec */ displayOptionSpec
+                    /* displayOptionSpec */ displayOptionSpec,
+                    /*allAppsCellHeightMultiplier*/ allAppsCellHeightMultiplier
             );
         }
 
@@ -420,12 +448,32 @@ public class DeviceProfile {
             hideWorkspaceLabelsIfNotEnoughSpace();
         }
 
-        if (inv.enableTwoLinesInAllApps
+        // If drawer labels are disabled, make the All Apps cell closer to a square
+        // by basing its height on the drawer width and column count.
+        if (!allAppsIconText) {
+            int cellLayoutHorizontalPadding =
+                    (mWorkspaceProfile.getCellLayoutPaddingPx().left
+                    + mWorkspaceProfile.getCellLayoutPaddingPx().right) / 2;
+            int leftRightPadding =
+                    getWorkspaceProfile().getDesiredWorkspaceHorizontalMarginPx()
+                    + cellLayoutHorizontalPadding;
+            int drawerWidth =
+                    mDeviceProperties.getAvailableWidthPx() - leftRightPadding * 2;
+
+            // Use the number of shown All Apps columns for actual cell width
+            int cellWidth = drawerWidth / mAllAppsProfile.getNumShownAllAppsColumns();
+            int cellHeight = (int) (cellWidth * allAppsCellHeightMultiplier);
+
+            mAllAppsProfile = getAllAppsProfile().copyWithCellHeightPx(cellHeight);
+        }
+
+        if (inv.getLauncherPrefs().get(LauncherPrefs.ENABLE_TWOLINE_ALLAPPS_TOGGLE)
+                && allAppsIconText
                 && !(mIsResponsiveGrid && getAllAppsProfile().getMaxAllAppsTextLineCount() == 2)) {
             // Add extra textHeight to the existing allAppsCellHeight.
+            int cellHeight = (int) (getAllAppsProfile().getCellHeightPx() * allAppsCellHeightMultiplier);
             mAllAppsProfile = getAllAppsProfile().copyWithCellHeightPx(
-                    getAllAppsProfile().getCellHeightPx()
-                            + Utilities.calculateTextHeight(getAllAppsProfile().getIconTextSizePx())
+                    cellHeight + Utilities.calculateTextHeight(getAllAppsProfile().getIconTextSizePx())
             );
         }
 
@@ -511,7 +559,7 @@ public class DeviceProfile {
     public int getMaxAllAppsRowCount() {
         return (int) (Math.ceil(
                 (mDeviceProperties.getAvailableHeightPx() - mAllAppsProfile.getPadding().top)
-                        / (float) getAllAppsProfile().getCellHeightPx()));
+                        / ((float) getAllAppsProfile().getCellHeightPx() * allAppsCellHeightMultiplier)));
     }
 
     /**
@@ -808,7 +856,7 @@ public class DeviceProfile {
      */
     public Rect getHotseatLayoutPadding(Context context) {
         boolean isTaskbarPresent = mDeviceProperties.getTaskbarConfiguration().isTaskbarPresent() &&
-                SettingsCache.INSTANCE.get(context).getValue(ENABLE_TASKBAR_URI);
+                mEnableTaskbar;
         Rect hotseatBarPadding = new Rect();
         if (isVerticalBarLayout()) {
             // The hotseat icons will be placed in the middle of the hotseat cells.
@@ -974,7 +1022,7 @@ public class DeviceProfile {
     }
 
     private int getAdditionalQsbSpace() {
-        if (!mIsHotseatQsbEnabled) return 0;
+        if (!isQsbVisible) return 0;
         return mHotseatProfile.isQsbInline() ? mHotseatProfile.getQsbWidth()
                 + mHotseatProfile.getBorderSpace() : 0;
     }
@@ -1011,7 +1059,7 @@ public class DeviceProfile {
      * Returns the number of pixels the QSB is translated from the bottom of the screen.
      */
     public int getQsbOffsetY() {
-        if (!mIsHotseatQsbEnabled) return 0;
+        if (!isQsbVisible) return 0;
         if (mHotseatProfile.isQsbInline()) {
             return getHotseatBarBottomPadding()
                     - ((getHotseatProfile().getQsbHeight()
@@ -1051,7 +1099,7 @@ public class DeviceProfile {
         if (shouldAlignBubbleBarWithHotseat()) {
             return mHotseatProfile.getBarSizePx()
                     - (mHotseatProfile.isQsbInline() ? 0 : getHotseatProfile().getQsbVisualHeight())
-                    - mHotseatProfile.getQsbSpace()
+                    - (isQsbVisible ? mHotseatProfile.getQsbSpace() : 0)
                     - (mHotseatProfile.getCellHeightPx() / 2)
                     + ((mHotseatProfile.getCellHeightPx()
                     - getWorkspaceProfile().getIconSizePx()) / 2);
@@ -1107,7 +1155,7 @@ public class DeviceProfile {
         int overviewActionsSpace = mDeviceProperties.isLargeScreen()
                 ? 0
                 : (overviewProfile.getActionsTopMarginPx() + overviewProfile.getActionsHeight());
-        return overviewActionsSpace + getOverviewActionsClaimedSpaceBelow();
+        return overviewActionsSpace + memInfoHeight + getOverviewActionsClaimedSpaceBelow();
     }
 
     /**
@@ -1161,11 +1209,13 @@ public class DeviceProfile {
     }
 
     public static int calculateCellWidth(int width, int borderSpacing, int countX) {
-        return (width - ((countX - 1) * borderSpacing)) / countX;
+        int adjustedCountX = countX <= 0 ? 1 : countX;
+        return (width - ((adjustedCountX - 1) * borderSpacing)) / adjustedCountX;
     }
 
     public static int calculateCellHeight(int height, int borderSpacing, int countY) {
-        return (height - ((countY - 1) * borderSpacing)) / countY;
+        int adjustedCountY = countY <= 0 ? 1 : countY;
+        return (height - ((adjustedCountY - 1) * borderSpacing)) / adjustedCountY;
     }
 
     /**
@@ -1605,6 +1655,10 @@ public class DeviceProfile {
         mTaskbarProfile = taskbarProfile;
     }
 
+    public LauncherPrefs getLauncherPrefs() {
+        return inv.getLauncherPrefs();
+    }
+
     /**
      * Callback when a component changes the DeviceProfile associated with it, as a result of
      * configuration change
@@ -1749,6 +1803,8 @@ public class DeviceProfile {
                 mDisplayOptionSpec = createDefaultDisplayOptionSpec(mInfo, mWindowBounds,
                         mIsMultiDisplay, mInv);
             }
+            final boolean enableTaskbar = isTaskbarEnabledBySetting(
+                    mInfo.context, mInfo.isLargeScreen(mWindowBounds));
             return new DeviceProfile(
                     mInv,
                     mInfo,
@@ -1762,7 +1818,8 @@ public class DeviceProfile {
                                     mIsGestureMode,
                                     mIsWorkspaceItemsLabelHidden
                             ),
-                            mWMProxy.isTaskbarDrawnInProcess()
+                            mWMProxy.isTaskbarDrawnInProcess(),
+                            enableTaskbar
                     ),
                     mViewScaleProvider,
                     mOverrideProvider,

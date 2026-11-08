@@ -31,7 +31,11 @@ import android.app.ActivityManager;
 import android.app.ActivityOptions;
 import android.app.Person;
 import android.app.WallpaperManager;
+import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
+import android.content.pm.ActivityInfo;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.Color;
@@ -49,6 +53,7 @@ import android.os.DeadObjectException;
 import android.os.Handler;
 import android.os.Message;
 import android.os.TransactionTooLargeException;
+import android.os.UserHandle;
 import android.text.Spannable;
 import android.text.SpannableString;
 import android.text.TextUtils;
@@ -85,6 +90,8 @@ import java.util.Objects;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
+import static com.android.launcher3.util.Executors.MAIN_EXECUTOR;
+
 /**
  * Various utilities shared amongst the Launcher's classes.
  */
@@ -110,6 +117,10 @@ public final class Utilities {
     public static final boolean ATLEAST_V = Build.VERSION.SDK_INT
             >= VERSION_CODES.VANILLA_ICE_CREAM;
 
+    private static final long WAIT_BEFORE_RESTART = 300; // ms
+    private static final Object sRestartLock = new Object();
+    private static boolean sRestartScheduled = false;
+
     /**
      * Set on a motion event dispatched from the nav bar. See {@link MotionEvent#setEdgeFlags(int)}.
      */
@@ -130,6 +141,15 @@ public final class Utilities {
 
     @IntDef({TRANSLATE_UP, TRANSLATE_DOWN, TRANSLATE_LEFT, TRANSLATE_RIGHT})
     public @interface AdjustmentDirection{}
+
+    public static final String GSA_PACKAGE = "com.google.android.googlequicksearchbox";
+    public static final String GEMINI_PACKAGE = "com.google.android.apps.bard";
+    public static final String LENS_ACTIVITY = "com.google.android.apps.search.lens.LensExportedActivity";
+    public static final String LENS_URI = "google://lens";
+    public static final String LENS_SHARE_ACTIVITY = "com.google.android.apps.search.lens.LensShareEntryPointActivity";
+
+    private static final String FREEFORM_PACKAGE = "com.libremobileos.freeform";
+    private static final String FREEFORM_INTENT = "com.libremobileos.freeform.START_FREEFORM";
 
     /**
      * Returns true if theme is dark.
@@ -255,6 +275,9 @@ public final class Utilities {
      * Inverse of {@link #getDescendantCoordRelativeToAncestor(View, View, float[], boolean)}.
      */
     public static void mapCoordInSelfToDescendant(View descendant, View root, float[] coord) {
+        if (descendant == null || root == null) {
+            return;
+        }
         sMatrix.reset();
         //TODO(b/307488755) when implemented this check should be removed
         if (!Objects.equals(descendant.getWindowId(), root.getWindowId())) {
@@ -881,6 +904,19 @@ public final class Utilities {
         }
     }
 
+    public static void restart() {
+        synchronized (sRestartLock) {
+            if (sRestartScheduled) {
+                return;
+            }
+            sRestartScheduled = true;
+        }
+
+        MAIN_EXECUTOR.getHandler().postDelayed(() -> {
+            System.exit(0);
+        }, WAIT_BEFORE_RESTART);
+    }
+
     /**
      * Returns whether mouse interaction changes intended for the desktop form factor should be
      * enabled.
@@ -945,5 +981,58 @@ public final class Utilities {
 
     public static boolean isWorkspaceEditAllowed(Context context) {
         return !LauncherPrefs.WORKSPACE_LOCK.get(context);
+    public static boolean isPackageInstalled(Context context, String pkg) {
+        try {
+            return context.getPackageManager().getApplicationInfo(pkg, 0).enabled;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public static boolean isGSAEnabled(Context context) {
+        return isPackageInstalled(context, GSA_PACKAGE);
+    }
+
+    public static boolean showQSB(Context context) {
+        return isGSAEnabled(context) && isQSBEnabled(context);
+    }
+
+    private static boolean isQSBEnabled(Context context) {
+        return LauncherPrefs.DOCK_SEARCH.get(context);
+    }
+
+    public static boolean isMusicSearchEnabled(Context context) {
+        return isGSAEnabled(context) && LauncherPrefs.DOCK_MUSIC_SEARCH.get(context);
+    }
+
+    public static boolean isResizeableActivity(Context context, ComponentName activity) {
+        if (activity == null) return false;
+        final ActivityInfo info;
+        try {
+            info = context.getPackageManager().getActivityInfo(activity, /* flags */ 0);
+        } catch (Exception e) {
+            Log.e(TAG, "failed to check isResizeableActivity:", e);
+            return false;
+        }
+        return ActivityInfo.isResizeableMode(info.resizeMode);
+    }
+
+    public static void startLmoFreeform(Context context, ComponentName activity,
+            int userId, int taskId) {
+        final Intent intent = new Intent(FREEFORM_INTENT)
+                .setPackage(FREEFORM_PACKAGE)
+                .putExtra("packageName", activity.getPackageName())
+                .putExtra("activityName", activity.getClassName())
+                .putExtra("userId", userId)
+                .putExtra("taskId", taskId);
+        context.sendBroadcast(intent);
+    }
+
+    public static void startLmoFreeform(Context context, ComponentName activity, int userId) {
+        startLmoFreeform(context, activity, userId, -1);
+    }
+
+    public static void startLmoFreeform(Context context, ComponentName activity) {
+        startLmoFreeform(context, activity, UserHandle.myUserId());
     }
 }

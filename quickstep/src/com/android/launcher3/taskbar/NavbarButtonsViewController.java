@@ -338,7 +338,7 @@ public class NavbarButtonsViewController implements TaskbarControllers.LoggableT
         mNavButtonsView.setLayoutParams(navButtonsViewLayoutParams);
 
         mIsImeRenderingNavButtons = mContext.imeDrawsImeNavBar();
-        if (!mIsImeRenderingNavButtons) {
+        if (!mIsImeRenderingNavButtons && !mContext.isPhoneGestureNavMode()) {
             // IME switcher
             mImeSwitcherButton = addButton(com.android.internal.R.drawable.ic_ime_switcher,
                     BUTTON_IME_SWITCH,
@@ -895,20 +895,6 @@ public class NavbarButtonsViewController implements TaskbarControllers.LoggableT
         int count = mPropertyHolders.size();
         for (int i = 0; i < count; i++) {
             mPropertyHolders.get(i).setState(mState, mContext.isGestureNav());
-        }
-
-        boolean isScreenPinningActive = (mState & FLAG_SCREEN_PINNING_ACTIVE) != 0;
-        if (mHomeButton != null) {
-            boolean isHomeLongClickable = (mControllers.getSharedState() == null
-                    || mControllers.getSharedState().assistantLongPressEnabled)
-                    && !isScreenPinningActive;
-            mHomeButton.setLongClickable(isHomeLongClickable);
-        }
-        if (mBackButton != null) {
-            mBackButton.setLongClickable(isScreenPinningActive);
-        }
-        if (mRecentsButton != null) {
-            mRecentsButton.setLongClickable(isScreenPinningActive);
         }
     }
 

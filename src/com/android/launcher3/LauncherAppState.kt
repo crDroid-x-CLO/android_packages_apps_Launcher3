@@ -16,9 +16,10 @@
 package com.android.launcher3
 
 import android.content.Context
+import android.widget.Toast;
 import com.android.launcher3.dagger.ApplicationContext
 import com.android.launcher3.icons.IconCache
-import com.android.launcher3.icons.LauncherIconProvider
+import com.android.launcher3.icons.ThirdPartyIconProvider
 import com.android.launcher3.util.DaggerSingletonObject
 import javax.inject.Inject
 import javax.inject.Named
@@ -29,14 +30,28 @@ data class LauncherAppState
 @Inject
 constructor(
     @ApplicationContext val context: Context,
-    val iconProvider: LauncherIconProvider,
+    val iconProvider: ThirdPartyIconProvider,
     val iconCache: IconCache,
     val model: LauncherModel,
     val invariantDeviceProfile: InvariantDeviceProfile,
     @Named("SAFE_MODE") val isSafeModeEnabled: Boolean,
 ) {
 
+    fun setNeedsRestart() {
+        needsRestart = true
+    }
+
+    fun checkIfRestartNeeded() {
+        // we destroyed Settings activity with the back button
+        // so we force a restart now if needed without waiting for home button press
+        if (needsRestart) {
+            Toast.makeText(context, R.string.restarting_launcher_changes, Toast.LENGTH_SHORT).show();
+            Utilities.restart()
+        }
+    }
+
     companion object {
+        @JvmField var needsRestart: Boolean = false
 
         @JvmField var INSTANCE = DaggerSingletonObject { it.launcherAppState }
 

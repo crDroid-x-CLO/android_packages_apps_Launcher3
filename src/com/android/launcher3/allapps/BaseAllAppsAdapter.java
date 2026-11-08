@@ -26,6 +26,7 @@ import static com.android.launcher3.allapps.UserProfileManager.STATE_DISABLED;
 import static com.android.launcher3.allapps.UserProfileManager.STATE_ENABLED;
 
 import android.util.Log;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.View.OnClickListener;
@@ -39,6 +40,7 @@ import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.android.launcher3.BubbleTextView;
+import com.android.launcher3.LauncherPrefs;
 import com.android.launcher3.R;
 import com.android.launcher3.allapps.search.SearchAdapterProvider;
 import com.android.launcher3.model.data.AppInfo;
@@ -185,6 +187,7 @@ public abstract class BaseAllAppsAdapter
     protected final OnClickListener mOnIconClickListener;
     protected final OnLongClickListener mOnIconLongClickListener;
     protected final CustomActionsListener mIconCustomActionsListener;
+    protected final int mTextColor;
     protected OnFocusChangeListener mIconFocusListener;
 
     public BaseAllAppsAdapter(ActivityContext activityContext, LayoutInflater inflater,
@@ -192,6 +195,8 @@ public abstract class BaseAllAppsAdapter
         mActivityContext = activityContext;
         mApps = apps;
         mLayoutInflater = inflater;
+
+        mTextColor = AppDrawerStyle.getContentColor(activityContext.asContext());
 
         mOnIconClickListener = mActivityContext.getItemOnClickListener();
         mOnIconLongClickListener = mActivityContext.getAllAppsItemLongClickListener();
@@ -277,6 +282,11 @@ public abstract class BaseAllAppsAdapter
                 AdapterItem adapterItem = mApps.getAdapterItems().get(position);
                 BubbleTextView icon = (BubbleTextView) holder.itemView;
                 icon.reset();
+                icon.setTextColor(mTextColor);
+                if (AppDrawerStyle.isHorizontalList(getDrawerStyle())) {
+                    // Guard against views that were inflated for the grid (e.g. recycled).
+                    applyHorizontalListLayout(icon);
+                }
                 icon.applyFromApplicationInfo(adapterItem.itemInfo);
                 icon.setOnFocusChangeListener(mIconFocusListener);
                 icon.configureMinimalPopup(
@@ -295,6 +305,7 @@ public abstract class BaseAllAppsAdapter
                                     privateProfileManager.getReadyToAnimate())
                                 && privateProfileManager.getCurrentState() == STATE_ENABLED
                                 ? 0 : 1);
+			/*
                         Log.d(TAG, "onBindViewHolder: "
                                 + "isPrivateSpaceItem: " + isPrivateSpaceItem
                         + " isStateTransitioning: " + privateProfileManager.isStateTransitioning()
@@ -302,6 +313,7 @@ public abstract class BaseAllAppsAdapter
                         + " readyToAnimate: " + privateProfileManager.getReadyToAnimate()
                         + " currentState: " + privateProfileManager.getCurrentState()
                         + " currentAlpha: " + icon.getAlpha());
+			*/
                     }
                     // Views can still be bounded before the app list is updated hence showing icons
                     // after collapsing.
@@ -356,9 +368,22 @@ public abstract class BaseAllAppsAdapter
         }
     }
 
+    /**
+     * Returns the {@link AppDrawerStyle} used to inflate app icons. Defaults to the stock grid.
+     */
+    protected String getDrawerStyle() {
+        return AppDrawerStyle.NORMAL;
+    }
+
     private BubbleTextView getIconOnCreateSetup(ViewGroup parent) {
-        int layout = mActivityContext.getDeviceProfile().inv.enableTwoLinesInAllApps
-                ? R.layout.all_apps_icon_twoline : R.layout.all_apps_icon;
+        final boolean horizontalList = AppDrawerStyle.isHorizontalList(getDrawerStyle());
+        final int layout;
+        if (horizontalList) {
+            layout = R.layout.all_apps_icon_horizontal_list;
+        } else {
+            layout = LauncherPrefs.ENABLE_TWOLINE_ALLAPPS_TOGGLE.get(mActivityContext.asContext())
+                    ? R.layout.all_apps_icon_twoline : R.layout.all_apps_icon;
+        }
         BubbleTextView icon = (BubbleTextView) mLayoutInflater.inflate(
                 layout, parent, false);
         icon.setLongPressTimeoutFactor(1f);
@@ -366,10 +391,27 @@ public abstract class BaseAllAppsAdapter
         icon.setOnClickListener(mOnIconClickListener);
         icon.setOnLongClickListener(mOnIconLongClickListener);
         icon.setCustomActionsListener(mIconCustomActionsListener);
-        // Ensure the all apps icon height matches the workspace icons in portrait mode.
-        icon.getLayoutParams().height =
-                mActivityContext.getDeviceProfile().getAllAppsProfile().getCellHeightPx();
+        if (horizontalList) {
+            applyHorizontalListLayout(icon);
+        } else {
+            // Ensure the all apps icon height matches the workspace icons in portrait mode.
+            icon.getLayoutParams().height =
+                    mActivityContext.getDeviceProfile().getAllAppsProfile().getCellHeightPx();
+        }
         return icon;
+    }
+
+    /** Icon on the start side with the label right after it, spanning the full row. */
+    private static void applyHorizontalListLayout(BubbleTextView icon) {
+        icon.setLayoutHorizontal(true);
+        icon.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        ViewGroup.LayoutParams lp = icon.getLayoutParams();
+        if (lp != null && (lp.width != ViewGroup.LayoutParams.MATCH_PARENT
+                || lp.height != ViewGroup.LayoutParams.WRAP_CONTENT)) {
+            lp.width = ViewGroup.LayoutParams.MATCH_PARENT;
+            lp.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+            icon.setLayoutParams(lp);
+        }
     }
 
     @Override

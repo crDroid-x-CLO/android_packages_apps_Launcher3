@@ -90,8 +90,11 @@ import static com.android.launcher3.model.ItemInstallQueue.FLAG_DRAG_AND_DROP;
 import static com.android.launcher3.model.data.ItemInfoWithIcon.FLAG_NOT_PINNABLE;
 import static com.android.launcher3.popup.SystemShortcut.ADD_TO_HOME_SCREEN;
 import static com.android.launcher3.popup.SystemShortcut.APP_INFO;
+import static com.android.launcher3.popup.SystemShortcut.CUSTOM_ICON;
 import static com.android.launcher3.popup.SystemShortcut.INSTALL;
 import static com.android.launcher3.popup.SystemShortcut.REMOVE;
+import static com.android.launcher3.popup.SystemShortcut.RENAME_APP;
+import static com.android.launcher3.popup.SystemShortcut.UNINSTALL;
 import static com.android.launcher3.popup.SystemShortcut.WIDGETS;
 import static com.android.launcher3.states.RotationHelper.REQUEST_LOCK;
 import static com.android.launcher3.states.RotationHelper.REQUEST_NONE;
@@ -198,6 +201,7 @@ import com.android.launcher3.popup.PopupContainer;
 import com.android.launcher3.popup.PopupController;
 import com.android.launcher3.popup.SystemShortcut;
 import com.android.launcher3.popup.WorkspaceLongPressOptions;
+import com.android.launcher3.quickspace.QuickSpaceView;
 import com.android.launcher3.statemanager.StateManager;
 import com.android.launcher3.statemanager.StateManager.StateHandler;
 import com.android.launcher3.statemanager.StatefulActivity;
@@ -399,6 +403,9 @@ public class Launcher extends StatefulActivity<LauncherState>
 
     protected WallpaperThemeManager mWallpaperThemeManager;
 
+    // QuickSpace
+    private QuickSpaceView mQuickSpace;
+
     public static Launcher getLauncher(Context context) {
         return fromContext(context);
     }
@@ -497,7 +504,8 @@ public class Launcher extends StatefulActivity<LauncherState>
         // Listen for screen turning off
         ScreenOnTracker.INSTANCE.get(this).addListener(mScreenOnListener);
         getSystemUiController().updateUiState(SystemUiController.UI_STATE_BASE_WINDOW,
-                Themes.getAttrBoolean(this, R.attr.isWorkspaceDarkText));
+                Themes.getAttrBoolean(this, R.attr.isWorkspaceDarkText)
+                || LauncherPrefs.DARK_STATUS_BAR.get(this));
 
         mOverlayManager = getDefaultOverlay();
 
@@ -1036,7 +1044,7 @@ public class Launcher extends StatefulActivity<LauncherState>
             mWorkspace.setClipChildren(false);
         }
         // When multiple pages are visible or desktop devices, show persistent page indicator
-        mWorkspace.getPageIndicator().setShouldAutoHide(!state.hasFlag(FLAG_MULTI_PAGE)
+        mWorkspace.getPageIndicator().setShouldAutoHide(LauncherPrefs.AUTO_HIDE_DOTS.get(this)
                 && !shouldEnableMouseInteractionChanges(mWorkspace.getContext()));
 
         mPrevLauncherState = mStateManager.getCurrentStableState();
@@ -1113,6 +1121,9 @@ public class Launcher extends StatefulActivity<LauncherState>
     protected void onResume() {
         TraceHelper.INSTANCE.beginSection(ON_RESUME_EVT);
         super.onResume();
+        if (mQuickSpace != null) {
+            mQuickSpace.onResume();
+        }
         mLauncherUiState.setIsResumedActivity(true);
         DragView.removeAllViews(this);
         TraceHelper.INSTANCE.endSection();
@@ -1128,6 +1139,9 @@ public class Launcher extends StatefulActivity<LauncherState>
         mDragController.cancelDrag();
         mLastTouchUpTime = -1;
         mDropTargetBar.animateToVisibility(false);
+        if (mQuickSpace != null) {
+            mQuickSpace.onPause();
+        }
 
         mAppWidgetHolder.setActivityResumed(false);
     }
@@ -1182,6 +1196,11 @@ public class Launcher extends StatefulActivity<LauncherState>
         mHotseat = findViewById(R.id.hotseat);
         mHotseat.setWorkspace(mWorkspace);
 
+        if (LauncherPrefs.SHOW_HOTSEAT_BG.get(this)) {
+            mHotseat.setBackgroundResource(R.drawable.bkg_appseat);
+            mHotseat.getBackground().setAlpha(LauncherPrefs.HOTSEAT_OPACITY.get(this) * 255 / 100);
+        }
+
         // Setup the drag layer
         mDragLayer.setup(mDragController, mWorkspace);
 
@@ -1202,11 +1221,17 @@ public class Launcher extends StatefulActivity<LauncherState>
         // Setup Scrim
         mScrimView = findViewById(R.id.scrim_view);
 
+        // QuickSpace
+        mQuickSpace = findViewById(R.id.reserved_container_workspace);
+        if (!LauncherPrefs.SHOW_QUICKSPACE.get(this) && mQuickSpace != null) {
+            mQuickSpace.setVisibility(View.GONE);
+        }
+
         // Setup the drag controller (drop targets have to be added in reverse order in priority)
         mDropTargetBar.setup(mDragController);
         mAllAppsController.setupViews(mScrimView, mAppsView);
 
-        mWorkspace.getPageIndicator().setShouldAutoHide(
+        mWorkspace.getPageIndicator().setShouldAutoHide(LauncherPrefs.AUTO_HIDE_DOTS.get(this) &&
                 !shouldEnableMouseInteractionChanges(mWorkspace.getContext()));
         mWorkspace.getPageIndicator().setPaintColor(Themes.getAttrBoolean(
                 this, R.attr.isWorkspaceDarkText) ? Color.BLACK : Color.WHITE);
@@ -1600,6 +1625,10 @@ public class Launcher extends StatefulActivity<LauncherState>
         LauncherAppState.getIDP(this).removeOnChangeListener(this);
         mOverlayManager.onActivityDestroyed();
         PillColorProvider.getInstance(mWorkspace.getContext()).unregisterObserver();
+
+        if (mQuickSpace != null) {
+            mQuickSpace.onDestroy();
+        }
     }
 
     public LauncherAccessibilityDelegate getAccessibilityDelegate() {
@@ -2805,18 +2834,20 @@ public class Launcher extends StatefulActivity<LauncherState>
     public Stream<SystemShortcut.Factory> getSupportedShortcuts(ItemInfo itemInfo) {
         int container = itemInfo.container;
         if (container == CONTAINER_DESKTOP || container == CONTAINER_HOTSEAT) {
-            return Stream.of(APP_INFO, WIDGETS, INSTALL, REMOVE);
+            return Stream.of(APP_INFO, RENAME_APP, CUSTOM_ICON, WIDGETS, INSTALL, REMOVE,
+                    UNINSTALL);
         } else if (container == CONTAINER_ALL_APPS || container == CONTAINER_ALL_APPS_PREDICTION) {
             // TODO(b/444744861): Update private space apps to have its own container.
             boolean isPinnable = itemInfo instanceof ItemInfoWithIcon info
                     && (info.runtimeStatusFlags & FLAG_NOT_PINNABLE) == 0;
             if (isPinnable) {
-                return Stream.of(APP_INFO, WIDGETS, INSTALL, ADD_TO_HOME_SCREEN);
+                return Stream.of(APP_INFO, RENAME_APP, CUSTOM_ICON, WIDGETS, INSTALL,
+                        ADD_TO_HOME_SCREEN, UNINSTALL);
             } else {
-                return Stream.of(APP_INFO, WIDGETS, INSTALL);
+                return Stream.of(APP_INFO, RENAME_APP, CUSTOM_ICON, WIDGETS, INSTALL, UNINSTALL);
             }
         }
-        return Stream.of(APP_INFO, WIDGETS, INSTALL);
+        return Stream.of(APP_INFO, RENAME_APP, CUSTOM_ICON, WIDGETS, INSTALL, UNINSTALL);
     }
 
     /**

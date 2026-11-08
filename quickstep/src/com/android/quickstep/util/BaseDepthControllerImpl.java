@@ -32,6 +32,7 @@ import androidx.annotation.Nullable;
 
 import com.android.app.animation.Interpolators;
 import com.android.launcher3.Flags;
+import com.android.launcher3.LauncherPrefs;
 import com.android.launcher3.R;
 import com.android.launcher3.Utilities;
 import com.android.launcher3.anim.AnimatedFloat;
@@ -135,8 +136,7 @@ public class BaseDepthControllerImpl<
     public BaseDepthControllerImpl(CONTAINER container, ListenableRef<Boolean> blurState) {
         mContainer = container;
         mCrossWindowBlursEnabled = blurState.getValue();
-        mMaxBlurRadius = container.getResources().getDimensionPixelSize(
-                R.dimen.max_depth_blur_radius_enhanced);
+        mMaxBlurRadius = LauncherPrefs.BLUR_DEPTH.get(container);
         mWallpaperManager = container.getSystemService(WallpaperManager.class);
 
         MultiPropertyFactory<BaseDepthControllerImpl<?, ?>> depthProperty =
@@ -230,6 +230,10 @@ public class BaseDepthControllerImpl<
         float wallpaperZoom = mDepth;
         if (Flags.enableExpressiveFolderExpansion()) {
             wallpaperZoom = Math.max(wallpaperZoom, mWallpaperZoomOnly.value);
+        }
+
+        if (!LauncherPrefs.ALLOW_WALLPAPER_ZOOMING.get(mContainer)) {
+            wallpaperZoom = 1f;
         }
 
         if (windowToken != null) {

@@ -337,8 +337,11 @@ object TaskOverlayModule {
         listOf(
             TaskShortcutFactory.APP_INFO,
             TaskShortcutFactory.SPLIT_SELECT,
+            TaskShortcutFactory.UNINSTALL,
+            TaskShortcutFactory.LOCK_APP,
             TaskShortcutFactory.PIN,
             TaskShortcutFactory.INSTALL,
+            TaskShortcutFactory.FLOATING,
             TaskShortcutFactory.FREE_FORM,
             desktopShortcutFactory,
             externalDisplayShortcutFactory,

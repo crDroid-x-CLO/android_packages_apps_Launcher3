@@ -24,27 +24,33 @@ import static com.android.launcher3.logging.StatsLogManager.LauncherEvent.LAUNCH
 import static com.android.launcher3.util.SplitConfigurationOptions.STAGE_POSITION_BOTTOM_OR_RIGHT;
 
 import android.app.ActivityOptions;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.RemoteException;
-import android.provider.Settings;
 import android.util.Log;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowManagerGlobal;
 import android.window.DesktopExperienceFlags;
 import android.window.SplashScreen;
+import android.widget.Toast;
 
 import androidx.annotation.Nullable;
 
 import com.android.launcher3.DeviceProfile;
 import com.android.launcher3.R;
+import com.android.launcher3.SecondaryDropTarget;
+import com.android.launcher3.Utilities;
 import com.android.launcher3.logging.StatsLogManager.LauncherEvent;
 import com.android.launcher3.popup.SystemShortcut;
 import com.android.launcher3.popup.SystemShortcut.AppInfo;
 import com.android.launcher3.util.InstantAppResolver;
+import com.android.launcher3.util.PackageManagerHelper;
 import com.android.launcher3.util.SplitConfigurationOptions;
 import com.android.launcher3.util.SplitConfigurationOptions.SplitPositionOption;
 import com.android.quickstep.orientation.RecentsPagedOrientationHandler;
@@ -282,6 +288,30 @@ public interface TaskShortcutFactory {
         }
     }
 
+    class FloatingTaskShortcut extends SystemShortcut<RecentsViewContainer> {
+        private final TaskView mTaskView;
+
+        public FloatingTaskShortcut(RecentsViewContainer container, TaskContainer taskContainer) {
+            super(R.drawable.picture_in_picture_mobile_24px, R.string.recent_task_option_freeform,
+                    container, taskContainer.getItemInfo(), taskContainer.getTaskView());
+            mTaskView = taskContainer.getTaskView();
+        }
+
+        @Override
+        public void onClick(View view) {
+            dismissTaskMenuView();
+            Task task = mTaskView.getFirstTask();
+            RecentsView rv = mTarget.getOverviewPanel();
+            rv.switchToScreenshot(() -> {
+                rv.finishRecentsAnimation(true /* toRecents */, false /* shouldPip */, () -> {
+                    mTarget.returnToHomescreenAfterFreeformShortcut();
+                    rv.getHandler().post(() -> Utilities.startLmoFreeform(view.getContext(),
+                            task.getTopComponent(), task.key.userId, task.key.id));
+                });
+            });
+        }
+    }
+
     /**
      * Does NOT add split options in the following scenarios:
      * * 1. Taskbar is not present AND aren't at least 2 tasks in overview to show split options for
@@ -370,6 +400,28 @@ public interface TaskShortcutFactory {
         }
     };
 
+    TaskShortcutFactory UNINSTALL = new TaskShortcutFactory() {
+        @Override
+        public List<SystemShortcut> getShortcuts(RecentsViewContainer container,
+                TaskContainer taskContainer) {
+            return PackageManagerHelper.isSystemApp(container.asContext(),
+                    taskContainer.getTask().getTopComponent().getPackageName()) ? null :
+                    Collections.singletonList(new SystemShortcut.UnInstall(container,
+                            taskContainer.getItemInfo(), taskContainer.getTaskView()));
+        }
+    };
+
+    TaskShortcutFactory LOCK_APP = new TaskShortcutFactory() {
+        @Override
+        public List<SystemShortcut> getShortcuts(RecentsViewContainer container,
+                TaskContainer taskContainer) {
+            if (taskContainer.getTaskView().getLockablePackages().isEmpty()) {
+                return null;
+            }
+            return Collections.singletonList(new LockAppSystemShortcut(container, taskContainer));
+        }
+    };
+
     TaskShortcutFactory FREE_FORM = new TaskShortcutFactory() {
         @Override
         public List<SystemShortcut> getShortcuts(RecentsViewContainer container,
@@ -389,10 +441,20 @@ public interface TaskShortcutFactory {
         }
 
         private boolean isAvailable(RecentsViewContainer container) {
-            return Settings.Global.getInt(
-                    container.asContext().getContentResolver(),
-                    Settings.Global.DEVELOPMENT_ENABLE_FREEFORM_WINDOWS_SUPPORT, 0) != 0
-                    && !DesktopModeStatus.canEnterDesktopMode(container.asContext());
+            return false;
+        }
+    };
+
+    TaskShortcutFactory FLOATING = new TaskShortcutFactory() {
+        @Override
+        public List<SystemShortcut> getShortcuts(RecentsViewContainer container,
+                TaskContainer taskContainer) {
+            final Task task  = taskContainer.getTask();
+            if (!task.isDockable) {
+                return null;
+            }
+
+            return Collections.singletonList(new FloatingTaskShortcut(container, taskContainer));
         }
     };
 
@@ -495,4 +557,26 @@ public interface TaskShortcutFactory {
             return createSingletonShortcutList(modalStateSystemShortcut);
         }
     };
+
+    class LockAppSystemShortcut extends SystemShortcut<RecentsViewContainer> {
+        private final TaskView mTaskView;
+
+        public LockAppSystemShortcut(RecentsViewContainer target, TaskContainer taskContainer) {
+            super(R.drawable.recents_locked, R.string.action_lock,
+                    target, taskContainer.getItemInfo(), taskContainer.getTaskView());
+            mTaskView = taskContainer.getTaskView();
+        }
+
+        @Override
+        public void onClick(View view) {
+            dismissTaskMenuView();
+            Boolean isNowLocked = mTaskView.toggleLockState();
+            if (isNowLocked == null) {
+                return;
+            }
+            Context context = mTaskView.getContext();
+            Toast.makeText(context, isNowLocked ? R.string.lock_app : R.string.unlock_app,
+                    Toast.LENGTH_SHORT).show();
+        }
+    }
 }

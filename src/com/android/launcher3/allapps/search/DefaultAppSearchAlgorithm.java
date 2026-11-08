@@ -39,8 +39,6 @@ import java.util.List;
  */
 public class DefaultAppSearchAlgorithm implements SearchAlgorithm<AdapterItem> {
 
-    private static final int MAX_RESULTS_COUNT = 5;
-
     private final LauncherAppState mAppState;
     private final Handler mResultHandler;
     private final boolean mAddNoResultsMessage;
@@ -97,7 +95,6 @@ public class DefaultAppSearchAlgorithm implements SearchAlgorithm<AdapterItem> {
         StringMatcherUtility.StringMatcher matcher =
                 StringMatcherUtility.StringMatcher.getInstance();
 
-        int resultCount = 0;
         int total = apps.size();
         UserManager userManager = UserManager.get(context);
         for (int i = 0; i < total && resultCount < MAX_RESULTS_COUNT; i++) {
@@ -107,7 +104,6 @@ public class DefaultAppSearchAlgorithm implements SearchAlgorithm<AdapterItem> {
             }
             if (StringMatcherUtility.matches(queryTextLower, info.title.toString(), matcher)) {
                 result.add(AdapterItem.asApp(info));
-                resultCount++;
             }
         }
         return result;

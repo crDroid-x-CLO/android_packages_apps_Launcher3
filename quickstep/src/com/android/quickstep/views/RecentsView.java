@@ -140,6 +140,7 @@ import com.android.launcher3.AbstractFloatingView;
 import com.android.launcher3.BuildConfig;
 import com.android.launcher3.DeviceProfile;
 import com.android.launcher3.Insettable;
+import com.android.launcher3.LauncherPrefs;
 import com.android.launcher3.MotionEventsUtils;
 import com.android.launcher3.PagedView;
 import com.android.launcher3.R;
@@ -179,6 +180,7 @@ import com.android.launcher3.util.ViewPool;
 import com.android.quickstep.BaseContainerInterface;
 import com.android.quickstep.GestureState;
 import com.android.quickstep.HighResLoadingState;
+import com.android.quickstep.LockedTaskManager;
 import com.android.quickstep.OverviewCommandHelper;
 import com.android.quickstep.OverviewComponentObserver;
 import com.android.quickstep.RecentsAnimationController;
@@ -523,6 +525,7 @@ public abstract class RecentsView<
     protected final RectF mTempRectF = new RectF();
     private final PointF mTempPointF = new PointF();
     private final Matrix mTempMatrix = new Matrix();
+    private final Matrix mAnimMatrix = new Matrix();
     private final float[] mTempFloat = new float[1];
     private final ArraySet<OnScrollChangedListener> mScrollListeners = new ArraySet<>();
 
@@ -807,6 +810,8 @@ public abstract class RecentsView<
 
     private OverviewActionsView mActionsView;
 
+    private MemInfoView mMemInfoView;
+
     @Nullable
     private DesktopRecentsTransitionController mDesktopRecentsTransitionController;
 
@@ -855,6 +860,8 @@ public abstract class RecentsView<
     private int mTaskViewCount = 0;
 
     protected final BlurUtils mBlurUtils = new BlurUtils(this);
+
+    private final Runnable mLockedTasksChangedListener = this::updateTaskViewsLockState;
 
     private final Runnable mPreloadRunnable = () -> {
         if (!mOverviewStateEnabled) {
@@ -1032,12 +1039,16 @@ public abstract class RecentsView<
     protected void onWindowVisibilityChanged(int visibility) {
         super.onWindowVisibilityChanged(visibility);
         updateTaskStackListenerState();
+        if (visibility != VISIBLE) {
+            mBlurUtils.setDrawLiveTileBelowRecents(false);
+        }
     }
 
     public void init(OverviewActionsView actionsView, SplitSelectStateController splitController,
             @Nullable DesktopRecentsTransitionController desktopRecentsTransitionController,
             SurfaceTransactionApplier surfaceTransactionApplier,
-            @Nullable ViewGroup emptyRecentsMessageView) {
+            @Nullable ViewGroup emptyRecentsMessageView,
+            MemInfoView memInfoView) {
         // OverviewActionsView related.
         mIs3PLauncher = !mOverviewComponentObserver.isHomeAndOverviewSame();
         mActionsView = actionsView;
@@ -1051,6 +1062,8 @@ public abstract class RecentsView<
         // Set in launcher to be in sync with the other Surface transactions e.g. in
         // BaseDepthController for applying blur.
         mSyncTransactionApplier = surfaceTransactionApplier;
+
+        mMemInfoView = memInfoView;
 
         // Empty Recents related.
         mEmptyRecentsMessageView = emptyRecentsMessageView;
@@ -1106,6 +1119,8 @@ public abstract class RecentsView<
         runActionOnRemoteHandles(remoteTargetHandle -> remoteTargetHandle.getTransformParams()
                 .setSyncTransactionApplier(mSyncTransactionApplier));
         mRecentsModel.addThumbnailChangeListener(this);
+        LockedTaskManager.getInstance(getContext()).addChangeListener(mLockedTasksChangedListener);
+        updateTaskViewsLockState();
         mIPipAnimationListener.setActivityAndRecentsView(mContainer, this);
 
         // Late initializer for SystemUiProxy
@@ -1132,6 +1147,8 @@ public abstract class RecentsView<
                 .setSyncTransactionApplier(null));
         executeSideTaskLaunchCallback();
         mRecentsModel.removeThumbnailChangeListener(this);
+        LockedTaskManager.getInstance(getContext())
+                .removeChangeListener(mLockedTasksChangedListener);
         mSystemUiProxy.removeOnStateChangeListener(mPreloadRunnable);
         mIPipAnimationListener.setActivityAndRecentsView(null, null);
         mOrientationState.destroyListeners();
@@ -1308,7 +1325,6 @@ public abstract class RecentsView<
             ValueAnimator appAnimator = ValueAnimator.ofFloat(0, 1);
             appAnimator.setDuration(RECENTS_LAUNCH_DURATION);
             appAnimator.setInterpolator(ACCELERATE_DECELERATE);
-            final Matrix matrix = new Matrix();
             appAnimator.addUpdateListener(valueAnimator -> {
                 float percent = valueAnimator.getAnimatedFraction();
                 SurfaceTransaction transaction = new SurfaceTransaction();
@@ -1319,11 +1335,12 @@ public abstract class RecentsView<
                             + app.screenSpaceBounds.left * percent;
                     float dy = mContainer.getDeviceProfile().getDeviceProperties().getHeightPx() * (1 - percent) / 2
                             + app.screenSpaceBounds.top * percent;
-                    matrix.setScale(percent, percent);
-                    matrix.postTranslate(dx, dy);
+                    mAnimMatrix.reset();
+                    mAnimMatrix.setScale(percent, percent);
+                    mAnimMatrix.postTranslate(dx, dy);
                     transaction.forSurface(app.leash)
                             .setAlpha(percent)
-                            .setMatrix(matrix);
+                            .setMatrix(mAnimMatrix);
                 }
                 surfaceApplier.scheduleApply(transaction);
             });
@@ -1738,6 +1755,7 @@ public abstract class RecentsView<
     }
 
     private void vibrateForScroll() {
+        if (!LauncherPrefs.RECENTS_SCROLL_VIBRATE.get(getContext())) return;
         long now = SystemClock.uptimeMillis();
         if (now - mScrollLastHapticTimestamp > mScrollHapticMinGapMillis) {
             mScrollLastHapticTimestamp = now;
@@ -1822,7 +1840,7 @@ public abstract class RecentsView<
             mPageScrolls = null;
         }
         if (taskGroups == null || taskGroups.isEmpty()) {
-            removeAllTaskViews();
+            removeAllTaskViews(/* keepLocked= */ false);
             onTaskStackUpdated();
             // With all tasks removed, touch handling in PagedView is disabled and we need to reset
             // touch state or otherwise values will be obsolete.
@@ -2015,14 +2033,25 @@ public abstract class RecentsView<
     }
 
     protected void removeAllTaskViews() {
+        removeAllTaskViews(/* keepLocked= */ true);
+    }
+
+    protected void removeAllTaskViews(boolean keepLocked) {
         // This handles an edge case where applyLoadPlan happens during a gesture when the only
         // Task is one with excludeFromRecents, in which case we should not remove it.
         CollectionsKt
-                .filter(getTaskViews(), taskView -> !isGestureActive() || !taskView.isRunningTask())
+                .filter(getTaskViews(), taskView -> !(keepLocked && taskView.isLocked())
+                        && (!isGestureActive() || !taskView.isRunningTask()))
                 .forEach(this::removeView);
         if (!hasTaskViews()) {
             removeView(mAddDesktopButton);
             removeView(mClearAllButton);
+        }
+    }
+
+    public void updateTaskViewsLockState() {
+        for (TaskView taskView : getTaskViews()) {
+            taskView.updateLockState();
         }
     }
 
@@ -2116,6 +2145,8 @@ public abstract class RecentsView<
 
         // Fade out the actions view quickly (0.1 range)
         mActionsView.getFullscreenAlpha().updateValue(
+                mapToRange(fullscreenProgress, 0, 0.1f, 1f, 0f, LINEAR));
+        mMemInfoView.setAlpha(MemInfoView.ALPHA_FS_PROGRESS,
                 mapToRange(fullscreenProgress, 0, 0.1f, 1f, 0f, LINEAR));
     }
 
@@ -3322,17 +3353,19 @@ public abstract class RecentsView<
                 splitAnimInitProps.getOriginalView(),
                 splitAnimInitProps.getOriginalBitmap(),
                 splitAnimInitProps.getIconDrawable(), startingTaskRect);
-        firstFloatingTaskView.setAlpha(1);
-        firstFloatingTaskView.addStagingAnimation(anim, startingTaskRect, mTempRect,
-                splitAnimInitProps.getFadeWithThumbnail(), splitAnimInitProps.isStagedTask());
-        mSplitSelectStateController.setFirstFloatingTaskView(firstFloatingTaskView);
+        if (firstFloatingTaskView != null) {
+            firstFloatingTaskView.setAlpha(1);
+            firstFloatingTaskView.addStagingAnimation(anim, startingTaskRect, mTempRect,
+                    splitAnimInitProps.getFadeWithThumbnail(), splitAnimInitProps.isStagedTask());
+            mSplitSelectStateController.setFirstFloatingTaskView(firstFloatingTaskView);
 
-        // Allow user to click staged app to launch into fullscreen
-        firstFloatingTaskView.setOnClickListener(view ->
-                mSplitSelectStateController.getSplitAnimationController().
-                        playAnimPlaceholderToFullscreen(mContainer, view,
-                                Optional.of(() -> mSplitSelectStateController.resetState())));
-        firstFloatingTaskView.setContentDescription(splitAnimInitProps.getContentDescription());
+            // Allow user to click staged app to launch into fullscreen
+            firstFloatingTaskView.setOnClickListener(view ->
+                    mSplitSelectStateController.getSplitAnimationController().
+                            playAnimPlaceholderToFullscreen(mContainer, view,
+                                    Optional.of(() -> mSplitSelectStateController.resetState())));
+            firstFloatingTaskView.setContentDescription(splitAnimInitProps.getContentDescription());
+        }
 
         // SplitInstructionsView: animate in
         safeRemoveDragLayerView(mSplitSelectStateController.getSplitInstructionsView());
@@ -3545,6 +3578,10 @@ public abstract class RecentsView<
         InteractionJankMonitorWrapper.begin(this, Cuj.CUJ_LAUNCHER_OVERVIEW_CLEAR_ALL);
         mDismissUtils.dismissAllTasks();
         mContainer.getStatsLogManager().logger().log(LAUNCHER_TASK_CLEAR_ALL);
+    }
+
+    public void dismissAllTasks() {
+        dismissAllTasks(null);
     }
 
     private void createDesk() {
@@ -4423,10 +4460,12 @@ public abstract class RecentsView<
             return false;
         }
 
-        firstFloatingTaskView.getBoundsOnScreen(firstTaskStartingBounds);
-        firstFloatingTaskView.addConfirmAnimation(pendingAnimation,
-                new RectF(firstTaskStartingBounds), firstTaskEndingBounds,
-                false /* fadeWithThumbnail */, true /* isStagedTask */);
+        if (firstFloatingTaskView != null) {
+            firstFloatingTaskView.getBoundsOnScreen(firstTaskStartingBounds);
+            firstFloatingTaskView.addConfirmAnimation(pendingAnimation,
+                    new RectF(firstTaskStartingBounds), firstTaskEndingBounds,
+                    false /* fadeWithThumbnail */, true /* isStagedTask */);
+        }
 
         safeRemoveDragLayerView(mSecondFloatingTaskView);
 
@@ -4563,8 +4602,10 @@ public abstract class RecentsView<
         mTempRectF.set(mTempRect);
         FloatingTaskView firstFloatingTaskView =
                 mSplitSelectStateController.getFirstFloatingTaskView();
-        firstFloatingTaskView.updateOrientationHandler(getPagedOrientationHandler());
-        firstFloatingTaskView.update(mTempRectF, /*progress=*/1f);
+        if (firstFloatingTaskView != null) {
+            firstFloatingTaskView.updateOrientationHandler(getPagedOrientationHandler());
+            firstFloatingTaskView.update(mTempRectF, /*progress=*/1f);
+        }
 
         RecentsPagedOrientationHandler orientationHandler = getPagedOrientationHandler();
         Pair<FloatProperty<RecentsView<?, ?>>, FloatProperty<RecentsView<?, ?>>> taskViewsFloat =
@@ -4956,6 +4997,7 @@ public abstract class RecentsView<
             final TransformParams params = remoteTargetHandle.getTransformParams();
             if (mContainer instanceof RecentsWindowManager) {
                 params.setHomeBuilderProxy((builder, app, transformParams) -> {
+                    mTmpMatrix.reset();
                     mTmpMatrix.setScale(
                             1f, 1f, app.localBounds.exactCenterX(), app.localBounds.exactCenterY());
                     builder.setMatrix(mTmpMatrix).setAlpha(1f).setShow();

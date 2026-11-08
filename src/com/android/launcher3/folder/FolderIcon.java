@@ -55,6 +55,7 @@ import com.android.launcher3.DeviceProfile;
 import com.android.launcher3.DropTarget.DragObject;
 import com.android.launcher3.Flags;
 import com.android.launcher3.Launcher;
+import com.android.launcher3.LauncherPrefs;
 import com.android.launcher3.LauncherSettings;
 import com.android.launcher3.OnAlarmListener;
 import com.android.launcher3.R;
@@ -228,6 +229,13 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
         icon.mFolderName = icon.findViewById(R.id.folder_icon_name);
         if (icon.mFolderName.shouldShowLabel()) {
             icon.mFolderName.applyLabel(folderInfo.title);
+            if (group != null && LauncherPrefs.ENABLE_TWOLINE_ALLAPPS_TOGGLE.get(group.getContext())) {
+                icon.mFolderName.setSingleLine(false);
+                icon.mFolderName.setMaxLines(2);
+            } else {
+                icon.mFolderName.setSingleLine(true);
+                icon.mFolderName.setMaxLines(1);
+            }
         }
         icon.mFolderName.setCompoundDrawablePadding(0);
         FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) icon.mFolderName.getLayoutParams();
@@ -658,13 +666,14 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        boolean shouldShowLabel = mFolderName.shouldShowLabel();
         boolean shouldCenterIcon = mActivity.getDeviceProfile().getWorkspaceProfile()
                 .getIconCenterVertically();
-        if (shouldCenterIcon) {
+        if (shouldCenterIcon || !shouldShowLabel) {
             int iconSize = mActivity.getDeviceProfile().getWorkspaceProfile().getIconSizePx();
             Paint.FontMetrics fm = mFolderName.getPaint().getFontMetrics();
-            int cellHeightPx = iconSize + mFolderName.getCompoundDrawablePadding()
-                    + (int) Math.ceil(fm.bottom - fm.top);
+            int textHeight = shouldShowLabel ? (int) Math.ceil(fm.bottom - fm.top) : 0;
+            int cellHeightPx = iconSize + mFolderName.getCompoundDrawablePadding() + textHeight;
             setPadding(getPaddingLeft(), (MeasureSpec.getSize(heightMeasureSpec)
                     - cellHeightPx) / 2, getPaddingRight(), getPaddingBottom());
         }
@@ -722,7 +731,9 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
     }
 
     public void onTitleChanged(CharSequence title) {
-        mFolderName.applyLabel(title);
+        if (mFolderName.shouldShowLabel()) {
+            mFolderName.applyLabel(title);
+        }
         setContentDescription(getAccessiblityTitle(title));
     }
 

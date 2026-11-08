@@ -142,7 +142,9 @@ data class HotseatProfileInitialValues(
                 if (deviceProperties.isTwoPanels) twoPanelCanInline else tabletInlineQsb
             canQsbInline = canQsbInline && qsbHeight > 0
 
-            val isQsbInline = (inv.inlineQsb[typeIndex] && canQsbInline) || inv.isFixedLandscape
+            val isQsbInline =
+                ((inv.inlineQsb[typeIndex] && canQsbInline) || inv.isFixedLandscape) &&
+                    qsbHeight > 0
 
             val areNavButtonsInline =
                 deviceProperties.taskbarConfiguration.isTaskbarPresent &&
@@ -172,24 +174,12 @@ data class HotseatProfileInitialValues(
 
             var hotseatQsbSpace: Int = if (qsbHeight > 0) responsiveHotseatSpec.hotseatQsbSpace else 0
             val hotseatBarBottomSpace: Int = responsiveHotseatSpec.edgePadding
-            var minQsbMargin = if (qsbHeight > 0) res.getDimensionPixelSize(R.dimen.min_qsb_margin) else 0
+            val minQsbMargin = if (qsbHeight > 0) res.getDimensionPixelSize(R.dimen.min_qsb_margin) else 0
 
             var barBottomSpacePx = 0
-            // Have a little space between the inset and the QSB
+            // Lift the QSB above the navigation bar / gesture inset, but do NOT steal from the
+            // hotseat<->QSB gap, so the spacing stays consistent across gesture and 3-button modes.
             if (deviceProperties.insets.bottom + minQsbMargin > hotseatBarBottomSpace) {
-                val availableSpace: Int =
-                    hotseatQsbSpace - (deviceProperties.insets.bottom - hotseatBarBottomSpace)
-
-                // Only change the spaces if there is space
-                if (availableSpace > 0) {
-                    // Make sure there is enough space between hotseat/QSB and QSB/navBar
-                    if (availableSpace < minQsbMargin * 2) {
-                        minQsbMargin = availableSpace / 2
-                        hotseatQsbSpace = minQsbMargin
-                    } else {
-                        hotseatQsbSpace -= minQsbMargin
-                    }
-                }
                 barBottomSpacePx = deviceProperties.insets.bottom + minQsbMargin
             } else {
                 barBottomSpacePx = hotseatBarBottomSpace
@@ -255,7 +245,9 @@ data class HotseatProfileInitialValues(
                 (if (deviceProperties.isTwoPanels) twoPanelCanInline else tabletInlineQsb) &&
                     qsbHeight > 0
 
-            val isQsbInline = (inv.inlineQsb[typeIndex] && canQsbInline) || inv.isFixedLandscape
+            val isQsbInline =
+                ((inv.inlineQsb[typeIndex] && canQsbInline) || inv.isFixedLandscape) &&
+                    qsbHeight > 0
 
             val areNavButtonsInline =
                 deviceProperties.taskbarConfiguration.isTaskbarPresent &&
@@ -292,24 +284,12 @@ data class HotseatProfileInitialValues(
             var hotseatQsbSpace = if (qsbHeight > 0) pxFromDp(inv.hotseatQsbSpace[typeIndex], metrics) else 0
             var hotseatBarBottomSpace = pxFromDp(inv.hotseatBarBottomSpace[typeIndex], metrics)
 
-            var minQsbMargin = if (qsbHeight > 0) res.getDimensionPixelSize(R.dimen.min_qsb_margin) else 0
+            val minQsbMargin = if (qsbHeight > 0) res.getDimensionPixelSize(R.dimen.min_qsb_margin) else 0
 
             var barBottomSpacePx = 0
-            // Have a little space between the inset and the QSB
+            // Lift the QSB above the navigation bar / gesture inset, but do NOT steal from the
+            // hotseat<->QSB gap, so the spacing stays consistent across gesture and 3-button modes.
             if (deviceProperties.insets.bottom + minQsbMargin > hotseatBarBottomSpace) {
-                val availableSpace: Int =
-                    hotseatQsbSpace - (deviceProperties.insets.bottom - hotseatBarBottomSpace)
-
-                // Only change the spaces if there is space
-                if (availableSpace > 0) {
-                    // Make sure there is enough space between hotseat/QSB and QSB/navBar
-                    if (availableSpace < minQsbMargin * 2) {
-                        minQsbMargin = availableSpace / 2
-                        hotseatQsbSpace = minQsbMargin
-                    } else {
-                        hotseatQsbSpace -= minQsbMargin
-                    }
-                }
                 barBottomSpacePx = deviceProperties.insets.bottom + minQsbMargin
             } else {
                 barBottomSpacePx = hotseatBarBottomSpace

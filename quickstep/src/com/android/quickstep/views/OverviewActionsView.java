@@ -16,8 +16,10 @@
 
 package com.android.quickstep.views;
 
+import android.animation.ObjectAnimator;
 import android.app.ActivityManager;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.graphics.Rect;
 import android.util.AttributeSet;
@@ -28,13 +30,16 @@ import android.view.View.OnClickListener;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
 
 import com.android.launcher3.DeviceProfile;
 import com.android.launcher3.Insettable;
+import com.android.launcher3.LauncherPrefs;
 import com.android.launcher3.R;
+import com.android.launcher3.Utilities;
 import com.android.launcher3.anim.AnimatedFloat;
 import com.android.launcher3.display.DisplayController;
 import com.android.launcher3.util.MultiValueAlpha;
@@ -52,7 +57,7 @@ import java.util.Arrays;
  * View for showing action buttons in Overview
  */
 public class OverviewActionsView<T extends OverlayUICallbacks> extends FrameLayout
-        implements OnClickListener, Insettable {
+        implements OnClickListener, Insettable, SharedPreferences.OnSharedPreferenceChangeListener {
     public static final String TAG = "OverviewActionsView";
     private final Rect mInsets = new Rect();
 
@@ -124,7 +129,10 @@ public class OverviewActionsView<T extends OverlayUICallbacks> extends FrameLayo
     private static final int INDEX_SCROLL_ALPHA = 5;
     private static final int INDEX_GROUPED_ALPHA = 6;
     private static final int INDEX_3P_LAUNCHER = 7;
-    private static final int NUM_ALPHAS = 8;
+    private static final int INDEX_LOCK_PILL_ALPHA = 8;
+    private static final int NUM_ALPHAS = 9;
+
+    private static final long LOCK_PILL_ANIM_DURATION = 150;
 
     public @interface SplitButtonHiddenFlags { }
     public static final int FLAG_SMALL_SCREEN_HIDE_SPLIT = 1 << 0;
@@ -169,6 +177,21 @@ public class OverviewActionsView<T extends OverlayUICallbacks> extends FrameLayo
     private boolean mIsGroupedTask = false;
     private boolean mCanSaveAppPair = false;
 
+    private boolean mScreenshot;
+    private boolean mClearAll;
+    private boolean mLens;
+
+    private SharedPreferences mPrefs;
+    private boolean mPrefsRegistered;
+
+    @Nullable
+    private View mLockPillContainer;
+    @Nullable
+    private TextView mLockPillText;
+    private boolean mLockPillShowing = false;
+    @Nullable
+    private ObjectAnimator mLockPillButtonsAnimator;
+
     public OverviewActionsView(Context context) {
         this(context, null);
     }
@@ -179,6 +202,40 @@ public class OverviewActionsView<T extends OverlayUICallbacks> extends FrameLayo
 
     public OverviewActionsView(Context context, @Nullable AttributeSet attrs, int defStyleAttr) {
         super(context, attrs, defStyleAttr, 0);
+        mPrefs = LauncherPrefs.getPrefs(context);
+        mScreenshot = LauncherPrefs.RECENTS_SCREENSHOT.get(context);
+        mClearAll = LauncherPrefs.RECENTS_CLEAR_ALL.get(context);
+        mLens = LauncherPrefs.RECENTS_LENS.get(context);
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (!mPrefsRegistered) {
+            mPrefs.registerOnSharedPreferenceChangeListener(this);
+            mPrefsRegistered = true;
+        }
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        resetLockPill();
+        setCallbacks(null);
+        clearChildClickListeners();
+        if (mPrefsRegistered) {
+            mPrefs.unregisterOnSharedPreferenceChangeListener(this);
+            mPrefsRegistered = false;
+        }
+        super.onDetachedFromWindow();
+    }
+
+    private void clearChildClickListeners() {
+        View v;
+        if ((v = findViewById(R.id.action_screenshot)) != null) v.setOnClickListener(null);
+        if ((v = findViewById(R.id.action_split)) != null) v.setOnClickListener(null);
+        if ((v = findViewById(R.id.action_save_app_pair)) != null) v.setOnClickListener(null);
+        if ((v = findViewById(R.id.action_clear_all)) != null) v.setOnClickListener(null);
+        if ((v = findViewById(R.id.action_lens)) != null) v.setOnClickListener(null);
     }
 
     @Override
@@ -205,15 +262,87 @@ public class OverviewActionsView<T extends OverlayUICallbacks> extends FrameLayo
                 }
             }, 1f /* initialValue */);
         }
+        mSaveAppPairButton.setOnClickListener(this);
 
+        mLockPillContainer = findViewById(R.id.lock_pill_container);
+        mLockPillText = findViewById(R.id.lock_pill_text);
+
+        updateVisibilities();
+    }
+
+    public void showLockPill(boolean isCurrentlyLocked) {
+        if (mLockPillContainer == null || mLockPillShowing) return;
+        mLockPillShowing = true;
+        if (mLockPillText != null) {
+            mLockPillText.setText(isCurrentlyLocked ? R.string.unlock_app : R.string.lock_app);
+        }
+        mLockPillContainer.animate().cancel();
+        mLockPillContainer.setAlpha(0f);
+        mLockPillContainer.setVisibility(VISIBLE);
+        mLockPillContainer.animate().alpha(1f).setDuration(LOCK_PILL_ANIM_DURATION).start();
+        animateLockPillButtonsAlpha(0f);
+    }
+
+    public void hideLockPill() {
+        if (mLockPillContainer == null || !mLockPillShowing) return;
+        mLockPillShowing = false;
+        View pill = mLockPillContainer;
+        pill.animate().cancel();
+        // withEndAction is not run when cancelled, so a quick re-show can't be hidden by it.
+        pill.animate().alpha(0f).setDuration(LOCK_PILL_ANIM_DURATION)
+                .withEndAction(() -> pill.setVisibility(GONE)).start();
+        animateLockPillButtonsAlpha(1f);
+    }
+
+    private void resetLockPill() {
+        mLockPillShowing = false;
+        if (mLockPillButtonsAnimator != null) {
+            mLockPillButtonsAnimator.cancel();
+            mLockPillButtonsAnimator = null;
+        }
+        mAlphaProperties[INDEX_LOCK_PILL_ALPHA].updateValue(1f);
+        if (mLockPillContainer != null) {
+            mLockPillContainer.animate().cancel();
+            mLockPillContainer.setVisibility(GONE);
+        }
+    }
+
+    private void animateLockPillButtonsAlpha(float target) {
+        if (mLockPillButtonsAnimator != null) {
+            mLockPillButtonsAnimator.cancel();
+        }
+        mLockPillButtonsAnimator = ObjectAnimator.ofFloat(
+                mAlphaProperties[INDEX_LOCK_PILL_ALPHA], AnimatedFloat.VALUE, target);
+        mLockPillButtonsAnimator.setDuration(LOCK_PILL_ANIM_DURATION);
+        mLockPillButtonsAnimator.start();
+    }
+
+    private void updateVisibilities() {
         // The screenshot button is implemented as a Button in launcher3 and NexusLauncher, but is
         // an ImageButton in go launcher (does not share a common class with Button). Take care when
         // casting this.
         View screenshotButton = findViewById(R.id.action_screenshot);
-        screenshotButton.setOnClickListener(this);
+        if (screenshotButton != null) {
+            screenshotButton.setOnClickListener(this);
+            screenshotButton.setVisibility(mScreenshot ? VISIBLE : GONE);
+        }
+
         mSplitButton = findViewById(R.id.action_split);
-        mSplitButton.setOnClickListener(this);
-        mSaveAppPairButton.setOnClickListener(this);
+        if (mSplitButton != null) {
+            mSplitButton.setOnClickListener(this);
+        }
+
+        View clearallButton = findViewById(R.id.action_clear_all);
+        if (clearallButton != null) {
+            clearallButton.setOnClickListener(this);
+            clearallButton.setVisibility(mClearAll ? VISIBLE : GONE);
+        }
+
+        View lensButton = findViewById(R.id.action_lens);
+        if (lensButton != null) {
+            lensButton.setOnClickListener(this);
+            lensButton.setVisibility(mLens && Utilities.isGSAEnabled(getContext()) ? VISIBLE : GONE);
+        }
     }
 
     /**
@@ -221,7 +350,7 @@ public class OverviewActionsView<T extends OverlayUICallbacks> extends FrameLayo
      *
      * @param callbacks for callbacks, or {@code null} to clear the listener.
      */
-    public void setCallbacks(T callbacks) {
+    public void setCallbacks(@Nullable T callbacks) {
         mCallbacks = callbacks;
     }
 
@@ -230,13 +359,17 @@ public class OverviewActionsView<T extends OverlayUICallbacks> extends FrameLayo
         if (mCallbacks == null) {
             return;
         }
-        int id = view.getId();
+        final int id = view.getId();
         if (id == R.id.action_screenshot) {
             mCallbacks.onScreenshot();
         } else if (id == R.id.action_split) {
             mCallbacks.onSplit();
         } else if (id == R.id.action_save_app_pair) {
             mCallbacks.onSaveAppPair();
+        } else if (id == R.id.action_clear_all) {
+            mCallbacks.onClearAllTasksRequested();
+        } else if (id == R.id.action_lens) {
+            mCallbacks.onLens();
         }
     }
 
@@ -251,6 +384,18 @@ public class OverviewActionsView<T extends OverlayUICallbacks> extends FrameLayo
         mInsets.set(insets);
         updateVerticalMargin(DisplayController.getNavigationMode(getContext()));
         updatePadding();
+    }
+
+    @Override
+    public void onSharedPreferenceChanged(SharedPreferences prefs, String key) {
+        if (LauncherPrefs.RECENTS_SCREENSHOT.getSharedPrefKey().equals(key)) {
+            mScreenshot = prefs.getBoolean(key, true);
+        } else if (LauncherPrefs.RECENTS_CLEAR_ALL.getSharedPrefKey().equals(key)) {
+            mClearAll = prefs.getBoolean(key, true);
+        } else if (LauncherPrefs.RECENTS_LENS.getSharedPrefKey().equals(key)) {
+            mLens = prefs.getBoolean(key, false);
+        }
+        updateVisibilities();
     }
 
     public void updateHiddenFlags(@ActionsHiddenFlags int visibilityFlags, boolean enable) {
@@ -398,6 +543,9 @@ public class OverviewActionsView<T extends OverlayUICallbacks> extends FrameLayo
     public void updateVerticalMargin(NavigationMode mode) {
         updateActionBarPosition(mActionButtons);
         updateActionBarPosition(mSaveAppPairButton);
+        if (mLockPillContainer != null) {
+            updateActionBarPosition(mLockPillContainer);
+        }
     }
 
     /** Positions actions buttons according to device settings and insets. */
@@ -445,12 +593,16 @@ public class OverviewActionsView<T extends OverlayUICallbacks> extends FrameLayo
         int splitIconRes = dp.getSysuiProfile().isLeftRightSplit()
                 ? R.drawable.ic_split_horizontal
                 : R.drawable.ic_split_vertical;
-        mSplitButton.setCompoundDrawablesRelativeWithIntrinsicBounds(splitIconRes, 0, 0, 0);
+        if (mSplitButton != null) {
+            mSplitButton.setCompoundDrawablesRelativeWithIntrinsicBounds(splitIconRes, 0, 0, 0);
+        }
 
         int appPairIconRes = dp.getSysuiProfile().isLeftRightSplit()
                 ? R.drawable.ic_save_app_pair_left_right
                 : R.drawable.ic_save_app_pair_up_down;
-        mSaveAppPairButton.setCompoundDrawablesRelativeWithIntrinsicBounds(
-                appPairIconRes, 0, 0, 0);
+        if (mSaveAppPairButton != null) {
+            mSaveAppPairButton.setCompoundDrawablesRelativeWithIntrinsicBounds(
+                    appPairIconRes, 0, 0, 0);
+        }
     }
 }

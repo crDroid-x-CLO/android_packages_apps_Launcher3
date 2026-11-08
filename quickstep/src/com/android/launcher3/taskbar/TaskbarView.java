@@ -43,6 +43,7 @@ import android.util.ArraySet;
 import android.util.AttributeSet;
 import android.view.DisplayCutout;
 import android.view.InputDevice;
+import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -59,6 +60,7 @@ import com.android.launcher3.BubbleTextView;
 import com.android.launcher3.DeviceProfile;
 import com.android.launcher3.Flags;
 import com.android.launcher3.Insettable;
+import com.android.launcher3.LauncherPrefs;
 import com.android.launcher3.R;
 import com.android.launcher3.Utilities;
 import com.android.launcher3.anim.AnimatorListeners;
@@ -232,9 +234,11 @@ public class TaskbarView extends FrameLayout implements FolderIcon.FolderIconPar
         mTaskbarUiState.setIsTaskbarViewShown(isShown());
         mTransientTaskbarMinWidth = resources.getDimension(R.dimen.transient_taskbar_min_width);
 
-        // TODO: Disable touch events on QSB otherwise it can crash.
-        if (mActivityContext.getDeviceProfile().isHotseatQsbEnabled()) {
-            mQsb = LauncherComponentProvider.get(context).getQsbWidgetFactory().createView(this);
+        if (Utilities.showQSB(context)) {
+            int layoutRes = LauncherPrefs.DOCK_SEARCH_PIXEL_STYLE.get(context)
+                    ? R.layout.qsb_container_hotseat_pixel
+                    : R.layout.qsb_container_hotseat;
+            mQsb = LayoutInflater.from(context).inflate(layoutRes, this, false);
         } else {
             mQsb = null;
         }

@@ -16,16 +16,19 @@
 
 package com.android.launcher3;
 
-import static com.android.launcher3.LauncherPrefs.ALLAPPS_THEMED_ICONS;
+import static com.android.launcher3.LauncherPrefs.ALLAPPS_ICON_CUSTOMIZATION;
 import static com.android.launcher3.LauncherPrefs.DB_FILE;
 import static com.android.launcher3.LauncherPrefs.DRAWER_OPEN_KEYBOARD;
 import static com.android.launcher3.LauncherPrefs.ENABLE_TWOLINE_ALLAPPS_TOGGLE;
 import static com.android.launcher3.LauncherPrefs.FIXED_LANDSCAPE_MODE;
+import static com.android.launcher3.LauncherPrefs.FONT_SIZE;
 import static com.android.launcher3.LauncherPrefs.GRID_NAME;
+import static com.android.launcher3.LauncherPrefs.ICON_SIZE;
 import static com.android.launcher3.LauncherPrefs.NON_FIXED_LANDSCAPE_GRID_NAME;
 import static com.android.launcher3.LauncherPrefs.SHOW_DESKTOP_LABELS;
 import static com.android.launcher3.LauncherPrefs.SHOW_DRAWER_LABELS;
 import static com.android.launcher3.LauncherPrefs.SHOW_HOTSEAT_QSB;
+import static com.android.launcher3.LauncherPrefs.ROW_HEIGHT;
 import static com.android.launcher3.LauncherPrefs.WORKSPACE_ITEMS_LABEL_HIDDEN;
 import static com.android.launcher3.Utilities.dpiFromPx;
 import static com.android.launcher3.deviceprofile.parser.DeviceTypedMap.COUNT_SIZES;
@@ -59,6 +62,7 @@ import androidx.annotation.StyleRes;
 import androidx.annotation.XmlRes;
 
 import com.android.launcher3.concurrent.annotations.Ui;
+import com.android.launcher3.customization.IconDatabase;
 import com.android.launcher3.dagger.ApplicationContext;
 import com.android.launcher3.dagger.LauncherAppComponent;
 import com.android.launcher3.dagger.LauncherAppSingleton;
@@ -147,6 +151,7 @@ public class InvariantDeviceProfile {
     public int[] numFolderColumns;
     public float[] iconSize;
     public float[] iconTextSize;
+    public String iconPack;
     public int iconBitmapSize;
     public int fillResIconDpi;
     public @DeviceType int deviceType;
@@ -227,7 +232,6 @@ public class InvariantDeviceProfile {
     public int allAppsCellSpecsTwoPanelId = INVALID_RESOURCE_HANDLE;
 
     private String mLocale = "";
-    public boolean enableTwoLinesInAllApps = false;
 
     // If non-negative, the workspace row with which top of the all apps container is to be aligned
     // with.
@@ -274,6 +278,7 @@ public class InvariantDeviceProfile {
         mMainExecutor = mainExecutor;
 
         String gridName = prefs.get(GRID_NAME);
+        maybeDefaultToFixedLandscape(context, gridName);
         initGrid(gridName);
         mThemeManager.generateIconShape(iconBitmapSize);
 
@@ -299,17 +304,18 @@ public class InvariantDeviceProfile {
                     onConfigChanged();
                 }
                 Trace.endSection();
-            } else if (ENABLE_TWOLINE_ALLAPPS_TOGGLE.getSharedPrefKey().equals(key)
-                    && enableTwoLinesInAllApps != prefs.get(ENABLE_TWOLINE_ALLAPPS_TOGGLE)) {
-                onConfigChanged();
             } else if (WORKSPACE_ITEMS_LABEL_HIDDEN.getSharedPrefKey().equals(key)
                     && com.android.systemui.shared.Flags.workspaceItemsLabelHidden()) {
                 onConfigChanged();
-            } else if (ALLAPPS_THEMED_ICONS.getSharedPrefKey().equals(key) ||
+            } else if (ALLAPPS_ICON_CUSTOMIZATION.getSharedPrefKey().equals(key) ||
                     DRAWER_OPEN_KEYBOARD.getSharedPrefKey().equals(key) ||
                     SHOW_DESKTOP_LABELS.getSharedPrefKey().equals(key) ||
                     SHOW_DRAWER_LABELS.getSharedPrefKey().equals(key) ||
-                    SHOW_HOTSEAT_QSB.getSharedPrefKey().equals(key)) {
+                    ICON_SIZE.getSharedPrefKey().equals(key) ||
+                    FONT_SIZE.getSharedPrefKey().equals(key) ||
+                    ENABLE_TWOLINE_ALLAPPS_TOGGLE.getSharedPrefKey().equals(key) ||
+                    ROW_HEIGHT.getSharedPrefKey().equals(key) ||
+                    IconDatabase.KEY_ICON_PACK.equals(key)) {
                 onConfigChanged();
             }
         };
@@ -322,6 +328,21 @@ public class InvariantDeviceProfile {
                 mMainExecutor, i -> onConfigChanged());
         localeReceiver.register(actionsFilter(Intent.ACTION_LOCALE_CHANGED));
         lifeCycle.addCloseable(localeReceiver);
+    }
+
+    /**
+     * Devices that are permanently in the phone landscape layout (e.g. gaming handhelds) have no
+     * room for workspace labels there. Let them default to fixed landscape mode via overlay.
+     */
+    private void maybeDefaultToFixedLandscape(Context context, String gridName) {
+        if (mPrefs.has(FIXED_LANDSCAPE_MODE)
+                || !context.getResources().getBoolean(R.bool.config_defaultFixedLandscape)) {
+            return;
+        }
+        if (gridName != null) {
+            mPrefs.put(NON_FIXED_LANDSCAPE_GRID_NAME, gridName);
+        }
+        mPrefs.put(FIXED_LANDSCAPE_MODE, true);
     }
 
     private void initGrid(String gridName) {
@@ -383,9 +404,6 @@ public class InvariantDeviceProfile {
     private void initGridForDisplayOption(
             LauncherDisplayInfo displayInfo, DisplayOption displayOption) {
         Context context = displayInfo.context;
-        enableTwoLinesInAllApps = Flags.enableTwolineToggle()
-                && Utilities.isEnglishLanguage(context)
-                && mPrefs.get(ENABLE_TWOLINE_ALLAPPS_TOGGLE);
         mLocale = context.getResources().getConfiguration().locale.toString();
 
         DisplayMetrics metrics = context.getResources().getDisplayMetrics();
@@ -425,16 +443,23 @@ public class InvariantDeviceProfile {
 
         inlineNavButtonsEndSpacing = closestProfile.inlineNavButtonsEndSpacing;
 
-        iconSize = displayOption.iconSizes;
+        float iconSizeModifier =
+                (float) mPrefs.get(ICON_SIZE) / 100F;
+        float fontSizeModifier =
+                (float) mPrefs.get(FONT_SIZE) / 100F;
+
+        iconSize = multiplyDimensions(displayOption.iconSizes, iconSizeModifier);
         float maxIconSize = iconSize[0];
         for (int i = 1; i < iconSize.length; i++) {
             maxIconSize = Math.max(maxIconSize, iconSize[i]);
         }
+        iconPack = IconDatabase.getGlobal(context);
+
         iconBitmapSize = ResourceUtils.pxFromDp(maxIconSize, metrics);
 
         fillResIconDpi = getLauncherIconDensity(iconBitmapSize);
 
-        iconTextSize = displayOption.textSizes;
+        iconTextSize = multiplyDimensions(displayOption.textSizes, fontSizeModifier);
 
         minCellSize = displayOption.minCellSize;
 
@@ -458,8 +483,9 @@ public class InvariantDeviceProfile {
 
         allAppsCellSize = displayOption.allAppsCellSize;
         allAppsBorderSpaces = displayOption.allAppsBorderSpaces;
-        allAppsIconSize = displayOption.allAppsIconSizes;
-        allAppsIconTextSize = displayOption.allAppsIconTextSizes;
+        allAppsIconSize = multiplyDimensions(displayOption.allAppsIconSizes, iconSizeModifier);
+        allAppsIconTextSize =
+                multiplyDimensions(displayOption.allAppsIconTextSizes, fontSizeModifier);
 
         inlineQsb = closestProfile.inlineQsb;
 
@@ -550,7 +576,8 @@ public class InvariantDeviceProfile {
     private Object[] toModelState() {
         return new Object[]{
                 numColumns, numRows, numSearchContainerColumns, numDatabaseHotseatIcons,
-                iconBitmapSize, fillResIconDpi, numDatabaseAllAppsColumns, dbFile, mLocale};
+                iconPack, iconBitmapSize, fillResIconDpi, numDatabaseAllAppsColumns,
+                dbFile, mLocale};
     }
 
     /** Updates IDP using the provided context. Notifies listeners of change. */
@@ -668,27 +695,33 @@ public class InvariantDeviceProfile {
     private static DisplayOption invDistWeightedInterpolate(
             LauncherDisplayInfo displayInfo, List<DisplayOption> points,
             @DeviceType int deviceType) {
-        int minWidthPx = Integer.MAX_VALUE;
-        int minHeightPx = Integer.MAX_VALUE;
+        float minWidth = Float.MAX_VALUE;
+        float minHeight = Float.MAX_VALUE;
         for (WindowBounds bounds : displayInfo.supportedBounds) {
             boolean isLargeScreen = displayInfo.isLargeScreen(bounds);
             if (isLargeScreen && deviceType == TYPE_MULTI_DISPLAY) {
                 // For split displays, take half width per page
-                minWidthPx = Math.min(minWidthPx, bounds.availableSize.x / 2);
-                minHeightPx = Math.min(minHeightPx, bounds.availableSize.y);
+                minWidth = Math.min(minWidth,
+                        dpiFromPx(bounds.availableSize.x / 2, bounds.densityDpi));
+                minHeight = Math.min(minHeight,
+                        dpiFromPx(bounds.availableSize.y, bounds.densityDpi));
 
             } else if (!isLargeScreen && bounds.isLandscape()) {
                 // We will use transposed layout in this case
-                minWidthPx = Math.min(minWidthPx, bounds.availableSize.y);
-                minHeightPx = Math.min(minHeightPx, bounds.availableSize.x);
+                minWidth = Math.min(minWidth,
+                        dpiFromPx(bounds.availableSize.y, bounds.densityDpi));
+                minHeight = Math.min(minHeight,
+                        dpiFromPx(bounds.availableSize.x, bounds.densityDpi));
             } else {
-                minWidthPx = Math.min(minWidthPx, bounds.availableSize.x);
-                minHeightPx = Math.min(minHeightPx, bounds.availableSize.y);
+                minWidth = Math.min(minWidth,
+                        dpiFromPx(bounds.availableSize.x, bounds.densityDpi));
+                minHeight = Math.min(minHeight,
+                        dpiFromPx(bounds.availableSize.y, bounds.densityDpi));
             }
         }
 
-        float width = dpiFromPx(minWidthPx, displayInfo.getDensityDpi());
-        float height = dpiFromPx(minHeightPx, displayInfo.getDensityDpi());
+        float width = minWidth;
+        float height = minHeight;
 
         // Sort the profiles based on the closeness to the device size
         points.sort((a, b) ->
@@ -724,6 +757,18 @@ public class InvariantDeviceProfile {
         }
 
         return out;
+    }
+
+    private static float[] multiplyDimensions(float[] dimensions, float scale) {
+        float[] out = new float[dimensions.length];
+        for (int i = 0; i < dimensions.length; i++) {
+            out[i] = dimensions[i] * scale;
+        }
+        return out;
+    }
+
+    LauncherPrefs getLauncherPrefs() {
+        return mPrefs;
     }
 
     public DeviceProfile createDeviceProfileForSecondaryDisplay(Context displayContext) {
