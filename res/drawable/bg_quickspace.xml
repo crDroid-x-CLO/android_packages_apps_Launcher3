@@ -1,9 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<<<<<<<< HEAD:res/values-ldrtl/lineage_config.xml
-<!-- Copyright (C) 2018 The LineageOS Project
-========
 <!-- Copyright (C) 2018-2025 crDroid Android Project
->>>>>>>> refs/remotes/crdroid/17.0:res/drawable/bg_quickspace.xml
 
      Licensed under the Apache License, Version 2.0 (the "License");
      you may not use this file except in compliance with the License.
@@ -17,11 +13,5 @@
      See the License for the specific language governing permissions and
      limitations under the License.
 -->
-<<<<<<<< HEAD:res/values-ldrtl/lineage_config.xml
-<resources>
-    <string name="pref_show_google_now_summary" translatable="false">@string/msg_minus_one_on_right</string>
-</resources>
-========
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle" />
->>>>>>>> refs/remotes/crdroid/17.0:res/drawable/bg_quickspace.xml
