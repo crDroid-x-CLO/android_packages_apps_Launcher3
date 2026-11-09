@@ -115,7 +115,6 @@ public class AlphabeticalAppsList implements AllAppsStore.OnUpdateListener {
     private int mNumAppsPerRowAllApps;
     private int mNumAppRowsInAdapter;
     private Predicate<ItemInfo> mItemFilter;
-    private final boolean mSortSections;
 
     public AlphabeticalAppsList(ActivityContext activityContext, @Nullable AllAppsStore appsStore,
             WorkProfileManager workProfileManager, PrivateProfileManager privateProfileManager) {
@@ -140,7 +139,6 @@ public class AlphabeticalAppsList implements AllAppsStore.OnUpdateListener {
         mPrivateProfileDividerBadge.setSpan(new ImageSpan(context,
                         R.drawable.ic_private_profile_divider_badge, ImageSpan.ALIGN_CENTER),
                 0, 1, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-        mSortSections = context.getResources().getBoolean(R.bool.config_appsListSortSections);
     }
 
     /** Set the number of apps per row when device profile changes. */
