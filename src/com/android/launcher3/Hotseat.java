@@ -282,6 +282,7 @@ public class Hotseat extends CellLayout implements Insettable {
         FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) getLayoutParams();
         DeviceProfile grid = mActivity.getDeviceProfile();
 
+        int topOverlap = 0;
         if (grid.isVerticalBarLayout()) {
             if (mQsb != null) mQsb.setVisibility(View.GONE);
             lp.height = ViewGroup.LayoutParams.MATCH_PARENT;
@@ -296,11 +297,17 @@ public class Hotseat extends CellLayout implements Insettable {
             if (mQsb != null) mQsb.setVisibility(View.VISIBLE);
             lp.gravity = Gravity.BOTTOM;
             lp.width = ViewGroup.LayoutParams.MATCH_PARENT;
-            lp.height = grid.getHotseatProfile().getBarSizePx();
+
+            // Since QSB is laid out relative to bottom, it expects a certain amount of available
+            // space in its parent (hotseat). If hotseatBarSizePx is less than that, we let it go
+            // beyond and offset the content accordingly.
+            int totalHeightForQsb = grid.getQsbOffsetY() + grid.getHotseatProfile().getQsbHeight();
+            topOverlap = Math.max(0, totalHeightForQsb - grid.getHotseatProfile().getBarSizePx());
+            lp.height = grid.getHotseatProfile().getBarSizePx() + topOverlap;
         }
 
         Rect padding = grid.getHotseatLayoutPadding(getContext());
-        setPadding(padding.left, padding.top, padding.right, padding.bottom);
+        setPadding(padding.left, padding.top + topOverlap, padding.right, padding.bottom);
         setLayoutParams(lp);
         InsettableFrameLayout.dispatchInsets(this, insets);
     }
@@ -370,25 +377,9 @@ public class Hotseat extends CellLayout implements Insettable {
         }
         int right = left + qsbMeasuredWidth;
 
-        int height = b - t;
-        int qsbHeight = dp.getHotseatProfile().getQsbHeight();
-        int bottomOffset;
-        int subtraction;
-        if (dp.getHotseatProfile().isQsbInline()) {
-            bottomOffset = dp.getHotseatBarBottomPadding();
-            subtraction = (qsbHeight - dp.getHotseatProfile().getCellHeightPx()) / 2;
-        } else if (dp.getDeviceProperties().getTaskbarConfiguration().isTaskbarPresent()) {
-            int offsetY = (dp.getHotseatProfile().getBarSizePx() - qsbHeight)
-                    + dp.getHotseatProfile().getQsbShadowHeight();
-            int bottom = height - offsetY;
-            mQsb.layout(left, bottom - qsbHeight, right, bottom);
-            return;
-        } else {
-            bottomOffset = dp.getHotseatProfile().getBarBottomSpacePx();
-            subtraction = dp.getHotseatProfile().getQsbShadowHeight();
-        }
-        int bottom = height - (bottomOffset - subtraction);
-        mQsb.layout(left, bottom - qsbHeight, right, bottom);
+        int bottom = b - t - dp.getQsbOffsetY();
+        int top = bottom - dp.getHotseatProfile().getQsbHeight();
+        mQsb.layout(left, top, right, bottom);
     }
 
     /**
