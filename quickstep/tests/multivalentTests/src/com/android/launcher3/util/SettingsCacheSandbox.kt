@@ -25,19 +25,31 @@ import org.mockito.kotlin.mock
 /** Provides [SettingsCache] sandboxed from system settings for testing. */
 class SettingsCacheSandbox {
     private val values = mutableMapOf<Uri, Int>()
+    private val intListenables = mutableMapOf<Uri, MutableListenableRef<Int>>()
 
     val listenable = MutableListenableRef(false)
 
     /**
      * Fake cache that delegates:
-     * - [SettingsCache.getValue] to [values]
-     * - [SettingsCache.mListenerMap] to [MutableListenableRef]
+     * - [SettingsCache.getValue] and [SettingsCache.getIntValue] to [values]
+     * - [SettingsCache.getListenableRef] to [MutableListenableRef]
+     * - [SettingsCache.getIntListenableRef] to [intListenables]
      */
     val cache =
         mock<SettingsCache> {
             on { getValue(any<Uri>()) } doAnswer { values.getOrDefault(it.getArgument(0), 0) == 1 }
+            on { getIntValue(any<Uri>()) } doAnswer { values.getOrDefault(it.getArgument(0), 0) }
+            on { getIntValue(any<Uri>(), any<Int>()) } doAnswer {
+                values[it.getArgument<Uri>(0)] ?: it.getArgument<Int>(1)
+            }
 
             on { getListenableRef(any<Uri>()) } doReturn listenable
+            on { getIntListenableRef(any<Uri>()) } doAnswer {
+                intListenable(it.getArgument<Uri>(0), 0)
+            }
+            on { getIntListenableRef(any<Uri>(), any<Int>()) } doAnswer {
+                intListenable(it.getArgument<Uri>(0), it.getArgument<Int>(1))
+            }
         }
 
     operator fun get(key: Uri): Int? = values[key]
@@ -46,5 +58,11 @@ class SettingsCacheSandbox {
         if (value == values[key]) return
         values[key] = value
         listenable.dispatchValue(value == 1)
+        intListenables[key]?.dispatchValue(value)
     }
+
+    private fun intListenable(uri: Uri, defaultValue: Int): MutableListenableRef<Int> =
+        intListenables.getOrPut(uri) {
+            MutableListenableRef(values.getOrDefault(uri, defaultValue))
+        }
 }
